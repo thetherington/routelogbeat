@@ -1,0 +1,9 @@
+/.idea
+/build
+
+.DS_Store
+/routebeat
+/routebeat.test
+*.pyc
+busCache.gob
+scheduleCache.gob
