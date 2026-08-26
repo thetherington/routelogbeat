@@ -9,33 +9,33 @@ import (
 	"github.com/elastic/elastic-agent-libs/logp"
 	"github.com/elastic/elastic-agent-libs/mapstr"
 
-	countCfg "github.com/thetherington/countbeat/config"
+	countCfg "github.com/thetherington/routelogbeat/config"
 )
 
-// countbeat configuration.
-type countbeat struct {
+// routelogbeat configuration.
+type routelogbeat struct {
 	done   chan struct{}
 	config countCfg.Config
 	client beat.Client
 }
 
-// New creates an instance of countbeat.
+// New creates an instance of routelogbeat.
 func New(b *beat.Beat, cfg *config.C) (beat.Beater, error) {
 	c := countCfg.DefaultConfig
 	if err := cfg.Unpack(&c); err != nil {
 		return nil, fmt.Errorf("Error reading config file: %v", err)
 	}
 
-	bt := &countbeat{
+	bt := &routelogbeat{
 		done:   make(chan struct{}),
 		config: c,
 	}
 	return bt, nil
 }
 
-// Run starts countbeat.
-func (bt *countbeat) Run(b *beat.Beat) error {
-	logp.Info("countbeat is running! Hit CTRL-C to stop it.")
+// Run starts routelogbeat.
+func (bt *routelogbeat) Run(b *beat.Beat) error {
+	logp.Info("routelogbeat is running! Hit CTRL-C to stop it.")
 
 	var err error
 	bt.client, err = b.Publisher.Connect()
@@ -65,8 +65,8 @@ func (bt *countbeat) Run(b *beat.Beat) error {
 	}
 }
 
-// Stop stops countbeat.
-func (bt *countbeat) Stop() {
+// Stop stops routelogbeat.
+func (bt *routelogbeat) Stop() {
 	bt.client.Close()
 	close(bt.done)
 }

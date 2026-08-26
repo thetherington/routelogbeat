@@ -1,4 +1,4 @@
-module github.com/thetherington/countbeat
+module github.com/thetherington/routelogbeat
 
 go 1.23.8
 

@@ -6,7 +6,7 @@ import (
 	"flag"
 	"testing"
 
-	"github.com/thetherington/countbeat/cmd"
+	"github.com/thetherington/routelogbeat/cmd"
 )
 
 var systemTest *bool

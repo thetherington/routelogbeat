@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	"github.com/thetherington/countbeat/cmd"
+	"github.com/thetherington/routelogbeat/cmd"
 
-	_ "github.com/thetherington/countbeat/include"
+	_ "github.com/thetherington/routelogbeat/include"
 )
 
 func main() {

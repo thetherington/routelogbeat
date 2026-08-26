@@ -1,5 +1,5 @@
-- key: countbeat
-  title: countbeat
+- key: routelogbeat
+  title: routelogbeat
   description:
   fields:
     - name: counter

@@ -1,10 +1,10 @@
 {
-    "index_patterns": ["log-routebeat-*"],
+    "index_patterns": ["log-routelogbeat-*"],
     "priority": 150,
     "template": {
         "mappings": {
             "_meta": {
-                "beat": "routebeat",
+                "beat": "routelogbeat",
                 "version": "8.18.0"
             },
             "date_detection": false,
@@ -960,7 +960,7 @@
         "settings": {
             "index": {
                 "lifecycle": {
-                    "name": "routebeat"
+                    "name": "routelogbeat"
                 },
                 "mapping": {
                     "total_fields": {

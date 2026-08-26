@@ -1,6 +1,6 @@
 [Unit]
-Description=Routebeat Magnum Route Collector.
-Documentation=https://github.com/thetherington/routebeat
+Description=Routelogbeat Magnum Route Collector.
+Documentation=https://github.com/thetherington/routelogbeat
 Wants=network-online.target
 After=network-online.target
 
@@ -8,10 +8,10 @@ After=network-online.target
 User=insite
 Environment="GODEBUG='madvdontneed=1'"
 Environment="BEAT_LOG_OPTS="
-Environment="BEAT_CONFIG_OPTS=-c /opt/packages/routebeat/routebeat.yml"
-Environment="BEAT_PATH_OPTS=--path.home /opt/packages/routebeat --path.data /opt/packages/routebeat/data/ --path.logs /opt/packages/routebeat/logs/"
-WorkingDirectory=/opt/packages/routebeat
-ExecStart=/opt/packages/routebeat/routebeat $BEAT_LOG_OPTS $BEAT_CONFIG_OPTS $BEAT_PATH_OPTS
+Environment="BEAT_CONFIG_OPTS=-c /opt/packages/routelogbeat/routelogbeat.yml"
+Environment="BEAT_PATH_OPTS=--path.home /opt/packages/routelogbeat --path.data /opt/packages/routelogbeat/data/ --path.logs /opt/packages/routelogbeat/logs/"
+WorkingDirectory=/opt/packages/routelogbeat
+ExecStart=/opt/packages/routelogbeat/routelogbeat $BEAT_LOG_OPTS $BEAT_CONFIG_OPTS $BEAT_PATH_OPTS
 Restart=always
 
 [Install]

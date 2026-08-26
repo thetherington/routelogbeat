@@ -1,5 +1,5 @@
-BEAT_NAME=countbeat
-BEAT_PATH=github.com/thetherington/countbeat
+BEAT_NAME=routelogbeat
+BEAT_PATH=github.com/thetherington/routelogbeat
 BEAT_GOPATH=$(firstword $(subst :, ,${GOPATH}))
 SYSTEM_TESTS=false
 TEST_ENVIRONMENT=false

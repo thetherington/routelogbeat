@@ -3,7 +3,7 @@
 Welcome to {Beat}.
 
 Ensure that this folder is at the following location:
-`${GOPATH}/src/github.com/thetherington/countbeat`
+`${GOPATH}/src/github.com/thetherington/routelogbeat`
 
 ## Getting Started with {Beat}
 
@@ -25,7 +25,7 @@ It will create a clean git history for each major step. Note that you can always
 To push {Beat} in the git repository, run the following commands:
 
 ```
-git remote set-url origin https://github.com/thetherington/countbeat
+git remote set-url origin https://github.com/thetherington/routelogbeat
 git push origin master
 ```
 
@@ -34,7 +34,7 @@ For further development, check out the [beat developer guide](https://www.elasti
 ### Build
 
 To build the binary for {Beat} run the command below. This will generate a binary
-in the same directory with the name countbeat.
+in the same directory with the name routelogbeat.
 
 ```
 make
@@ -45,7 +45,7 @@ make
 To run {Beat} with debugging output enabled, run:
 
 ```
-./countbeat -c countbeat.yml -e -d "*"
+./routelogbeat -c routelogbeat.yml -e -d "*"
 ```
 
 ### Test
@@ -95,8 +95,8 @@ make clean
 To clone {Beat} from the git repository, run the following commands:
 
 ```
-mkdir -p ${GOPATH}/src/github.com/thetherington/countbeat
-git clone https://github.com/thetherington/countbeat ${GOPATH}/src/github.com/thetherington/countbeat
+mkdir -p ${GOPATH}/src/github.com/thetherington/routelogbeat
+git clone https://github.com/thetherington/routelogbeat ${GOPATH}/src/github.com/thetherington/routelogbeat
 ```
 
 For further development, check out the [beat developer guide](https://www.elastic.co/guide/en/beats/libbeat/current/new-beat.html).

@@ -1,5 +1,5 @@
-cp routebeat.service /lib/systemd/system/
+cp routelogbeat.service /lib/systemd/system/
 
 systemctl daemon-reload 2> /dev/null
 
-sudo systemctl enable routebeat
+sudo systemctl enable routelogbeat
