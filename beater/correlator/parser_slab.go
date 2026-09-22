@@ -23,7 +23,9 @@ const slabLineTimeLayout = "02.01.2006 15:04:05.000"
 // devices. Hostname comes from RawLog.Hostname (a structured field set by
 // the beater from SyslogMessage.Annotation.General.DeviceName), never
 // regex-extracted from the line. Never opens an envelope; resolves via
-// hostname+DST# against the engine's slabIndex.
+// hostname+DST# against the engine's slabIndex — and, once a magrtrsrv
+// record has reported a multicast for that destination, must also carry
+// that same multicast (see Engine.resolveMember in correlator.go).
 type slabParser struct{}
 
 func (slabParser) Name() string { return "slab" }

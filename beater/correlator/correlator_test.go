@@ -225,28 +225,21 @@ func TestEngine_OneSlabLogStillCloses(t *testing.T) {
 	require.Equal(t, ReasonCloseAfter, env.Reason)
 }
 
-func TestEngine_MagrtrsrvMulticastWins(t *testing.T) {
-	t.Run("magrtrsrv before slab", func(t *testing.T) {
+// TestEngine_MagrtrsrvDictatesSlabMulticast covers the compound match rule:
+// hostname/DST# alone (via the resolver's slab list) is enough for a slab
+// record to attach ONLY until a magrtrsrv record has reported a multicast
+// for that destination; once one has, a slab record must carry that exact
+// multicast too, or it is treated as unresolved rather than attaching with
+// a conflicting value.
+func TestEngine_MagrtrsrvDictatesSlabMulticast(t *testing.T) {
+	newResolverEngine := func(t *testing.T) (*Engine, *fakeClock) {
 		res := NewMapResolver()
 		res.Store([]Entry{{DstUUID: testDst, Slabs: []SlabRef{{Hostname: "sv7bc-slab058", DstNum: 4}}}})
-		eng, clock := newTestEngine(t, nil, WithResolver(res))
+		return newTestEngine(t, nil, WithResolver(res))
+	}
 
-		submitAll(t, eng,
-			RawLog{Line: schedulerLine(testSrc, testDst), Time: testTime},
-			RawLog{Line: magrtrsrvLine("sv7bc-slab058", 4, "239.32.111.55"), Time: testTime.Add(time.Second)},
-			RawLog{Line: slabLine("sv7bc-slab058", 4, "239.32.111.99"), Time: testTime.Add(2 * time.Second), Hostname: "sv7bc-slab058"},
-		)
-		clock.Advance(time.Minute)
-
-		env := recvEnvelope(t, eng)
-		require.Equal(t, "239.32.111.55", env.Resolved.Multicast) // magrtrsrv's, not slab's differing ADDR
-		require.Equal(t, 1, env.SourceCounts()["magrtrsrv"])
-	})
-
-	t.Run("slab before magrtrsrv", func(t *testing.T) {
-		res := NewMapResolver()
-		res.Store([]Entry{{DstUUID: testDst, Slabs: []SlabRef{{Hostname: "sv7bc-slab058", DstNum: 4}}}})
-		eng, clock := newTestEngine(t, nil, WithResolver(res))
+	t.Run("slab before magrtrsrv falls back to hostname/DST# alone, then magrtrsrv overwrites the multicast", func(t *testing.T) {
+		eng, clock := newResolverEngine(t)
 
 		submitAll(t, eng,
 			RawLog{Line: schedulerLine(testSrc, testDst), Time: testTime},
@@ -256,7 +249,42 @@ func TestEngine_MagrtrsrvMulticastWins(t *testing.T) {
 		clock.Advance(time.Minute)
 
 		env := recvEnvelope(t, eng)
-		require.Equal(t, "239.32.111.55", env.Resolved.Multicast) // magrtrsrv still overwrites, regardless of arrival order
+		require.Equal(t, 1, env.SourceCounts()["slab"])           // attached via hostname/DST# fallback, no magrtrsrv yet
+		require.Equal(t, "239.32.111.55", env.Resolved.Multicast) // magrtrsrv still overwrites afterward
+	})
+
+	t.Run("once magrtrsrv is known, a slab log with the matching multicast attaches", func(t *testing.T) {
+		eng, clock := newResolverEngine(t)
+
+		submitAll(t, eng,
+			RawLog{Line: schedulerLine(testSrc, testDst), Time: testTime},
+			RawLog{Line: magrtrsrvLine("sv7bc-slab058", 4, "239.32.111.55"), Time: testTime.Add(time.Second)},
+			RawLog{Line: slabLine("sv7bc-slab058", 4, "239.32.111.55"), Time: testTime.Add(2 * time.Second), Hostname: "sv7bc-slab058"},
+		)
+		clock.Advance(time.Minute)
+
+		env := recvEnvelope(t, eng)
+		require.Equal(t, 1, env.SourceCounts()["slab"])
+		require.Equal(t, "239.32.111.55", env.Resolved.Multicast)
+	})
+
+	t.Run("once magrtrsrv is known, a slab log with a conflicting multicast is rejected, not overridden", func(t *testing.T) {
+		eng, clock := newResolverEngine(t)
+
+		submitAll(t, eng,
+			RawLog{Line: schedulerLine(testSrc, testDst), Time: testTime},
+			RawLog{Line: magrtrsrvLine("sv7bc-slab058", 4, "239.32.111.55"), Time: testTime.Add(time.Second)},
+			RawLog{Line: slabLine("sv7bc-slab058", 4, "239.32.111.99"), Time: testTime.Add(2 * time.Second), Hostname: "sv7bc-slab058"},
+		)
+		require.EqualValues(t, 1, eng.Stats().UnresolvedSlab) // hostname/DST# matched, but the multicast didn't
+
+		clock.Advance(time.Minute) // also past pending_wait, so the mismatched slab record gets dropped, not retried forever
+		env := recvEnvelope(t, eng)
+
+		require.Equal(t, 0, env.SourceCounts()["slab"])           // never attached
+		require.Equal(t, "239.32.111.55", env.Resolved.Multicast) // untouched by the rejected slab record
+		require.Equal(t, 1, env.SourceCounts()["magrtrsrv"])
+		require.EqualValues(t, 1, eng.Stats().PendingDropped)
 	})
 }
 

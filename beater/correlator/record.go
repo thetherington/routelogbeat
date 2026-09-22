@@ -86,8 +86,11 @@ type RawLog struct {
 type Key struct{ Src, Dst string }
 
 // SlabObs is a slab or magrtrsrv observation extracted from a log line: the
-// hostname+number pair used to resolve the record's Key, plus a multicast
-// address carried as enrichment only — never used to resolve anything.
+// hostname+number pair used to resolve the record's Key (against the
+// Resolver's slab list), plus a multicast address that is primarily
+// enrichment (it becomes Envelope.Resolved.Multicast for magrtrsrv) but, for
+// a slab record specifically, is also cross-checked once a magrtrsrv record
+// has reported one for that destination — see Engine.resolveMember.
 type SlabObs struct {
 	Hostname  string
 	DstNum    int

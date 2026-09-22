@@ -21,7 +21,11 @@
 // magrtrsrv lines carry only a hostname and a "DST n" number; resolving them
 // requires an already-open envelope for their destination (via the injected
 // Resolver's Lookup(dstUUID) — see resolver.go) — they can never open an
-// envelope themselves.
+// envelope themselves. A slab record additionally requires its own multicast
+// address to match whatever a magrtrsrv record already reported for that
+// envelope, once one has — hostname/DST# plus multicast together, for extra
+// specificity; before any magrtrsrv has reported one, hostname/DST# alone is
+// enough. See resolveMember.
 package correlator
 
 import (
@@ -308,8 +312,7 @@ func (e *Engine) ingest(raw RawLog) {
 
 	for _, rec := range recs {
 		if rec.Kind == KindSlab || rec.Kind == KindMagrtrsrv {
-			ref := SlabRef{Hostname: rec.Slab.Hostname, DstNum: rec.Slab.DstNum}
-			key, ok := e.slabIndex[ref]
+			key, ok := e.resolveMember(rec)
 			if !ok {
 				e.stats.unresolvedSlab.Add(1)
 				e.bufferPending(rec)
@@ -322,6 +325,29 @@ func (e *Engine) ingest(raw RawLog) {
 		}
 		e.route(rec)
 	}
+}
+
+// resolveMember resolves a UUID-less slab/magrtrsrv record to its Key via
+// hostname+DstNum against slabIndex (sourced from the injected Resolver's
+// destination slab list) — the sole mechanism for magrtrsrv, and the
+// fallback for slab when its destination has no magrtrsrv-reported multicast
+// yet. Once an envelope does have one (env.Resolved.Multicast, only ever set
+// by a magrtrsrv record — see attach), a slab record must ALSO carry that
+// same multicast to resolve: hostname/DST# plus multicast together, for
+// extra specificity. A slab record whose own ADDR conflicts with it is
+// treated as unresolved (buffers, eventually drops), not merely deprioritized.
+func (e *Engine) resolveMember(rec Record) (Key, bool) {
+	ref := SlabRef{Hostname: rec.Slab.Hostname, DstNum: rec.Slab.DstNum}
+	key, ok := e.slabIndex[ref]
+	if !ok {
+		return Key{}, false
+	}
+	if rec.Kind == KindSlab {
+		if env, open := e.open[key]; open && env.Resolved.Multicast != "" && rec.Slab.Multicast != env.Resolved.Multicast {
+			return Key{}, false
+		}
+	}
+	return key, true
 }
 
 // route attaches rec to its envelope, opening one first if rec's Kind is
@@ -417,8 +443,9 @@ func (e *Engine) evictOldest() {
 }
 
 // attach appends rec to env, extends its time span, and folds in a
-// multicast address if rec carries one (magrtrsrv always wins; slab only
-// fills an empty value). Never used to resolve anything — enrichment only.
+// multicast address if rec carries one (magrtrsrv always wins, and updates
+// what future slab records must additionally match — see resolveMember;
+// slab only fills an empty value, i.e. before any magrtrsrv has reported one).
 func (e *Engine) attach(env *Envelope, rec Record) {
 	env.Records = append(env.Records, rec)
 	if rec.Time.After(env.LastAt) {
@@ -455,8 +482,7 @@ func (e *Engine) sweep(now time.Time) {
 	}
 	kept := e.pending[:0]
 	for _, pr := range e.pending {
-		ref := SlabRef{Hostname: pr.rec.Slab.Hostname, DstNum: pr.rec.Slab.DstNum}
-		if key, ok := e.slabIndex[ref]; ok {
+		if key, ok := e.resolveMember(pr.rec); ok {
 			pr.rec.Key = &key
 			e.route(pr.rec)
 			continue
@@ -490,14 +516,16 @@ func (e *Engine) bufferPending(rec Record) {
 
 // drainPendingFor re-checks buffered records against key's just-registered
 // slabIndex entries immediately, so they don't wait for the next sweep tick.
+// (A magrtrsrv record setting Resolved.Multicast in attach never needs this:
+// the multicast cross-check in resolveMember only tightens a slab record
+// that has already resolved via slabIndex — it can't unlock one that hasn't.)
 func (e *Engine) drainPendingFor(key Key) {
 	if len(e.pending) == 0 {
 		return
 	}
 	kept := e.pending[:0]
 	for _, pr := range e.pending {
-		ref := SlabRef{Hostname: pr.rec.Slab.Hostname, DstNum: pr.rec.Slab.DstNum}
-		if k, ok := e.slabIndex[ref]; ok && k == key {
+		if k, ok := e.resolveMember(pr.rec); ok && k == key {
 			pr.rec.Key = &k
 			e.route(pr.rec)
 			continue

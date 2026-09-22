@@ -10,10 +10,15 @@ import (
 // TestEndToEnd_UserSnippet replays the log lines from the design discussion
 // — one scheduler, two magnum, two slab, optionally one magrtrsrv — through
 // a real Engine with RealClock, and checks the resulting envelope end to
-// end. This is the plan's Verification step 4, split into the two cases
-// that matter for Resolved.Multicast: without a magrtrsrv log (the slab
-// logs' own ADDR field is the only multicast source) and with one (it
-// always wins, even over a slab log that reports something different).
+// end. This is the plan's Verification step 4, split into the cases that
+// matter for how a slab record resolves and what ends up in
+// Resolved.Multicast: without a magrtrsrv log (hostname/DST# alone is
+// enough, and the slab logs' own ADDR field is the only multicast source);
+// with one reporting the same multicast the slab logs carry (both checks
+// pass, so they still attach); and with one reporting something different
+// (the slab logs then never correlate at all — see correlator_test.go's
+// TestEngine_MagrtrsrvDictatesSlabMulticast for the engine-level coverage of
+// this rule).
 func TestEndToEnd_UserSnippet(t *testing.T) {
 	const (
 		src = "3fd8c558-c7dd-5ca4-8cb1-3f5d2a525c6f"
@@ -98,27 +103,27 @@ func TestEndToEnd_UserSnippet(t *testing.T) {
 		}
 	}
 
-	// Common assertions that hold regardless of whether magrtrsrv showed up:
-	// correlation identity, who opened it, that it closed on schedule, and
-	// the two duration metrics — SchedulerToSlabMillis in particular ignores
-	// magrtrsrv/magnum entirely, so it must read the same in both cases.
+	// Common assertions that hold in every case: correlation identity, who
+	// opened it, that it closed on schedule.
 	assertCommon := func(t *testing.T, env *Envelope) {
 		t.Helper()
 		require.Equal(t, Key{Src: src, Dst: dst}, env.Key)
 		require.Equal(t, KindScheduler, env.OpenedBy)
 		require.False(t, env.Partial)
 		require.Equal(t, ReasonCloseAfter, env.Reason)
-
-		wantDuration := parseTime(t, "2026-08-23T04:00:12.653Z").Sub(parseTime(t, "2026-08-23T04:00:00.065Z"))
-		require.Equal(t, wantDuration, env.Duration())
-		require.Equal(t, 12_588*time.Millisecond, env.Duration())
-
-		ms, ok := env.SchedulerToSlabMillis()
-		require.True(t, ok)
-		require.EqualValues(t, 12_588, ms)
 	}
 
-	t.Run("without magrtrsrv: multicast comes from the slab logs' own ADDR field", func(t *testing.T) {
+	// magrtrsrvLog arrives before its slab logs, as the design assumes
+	// (though resolution doesn't depend on that order — see
+	// correlator_test.go's TestEngine_MagrtrsrvDictatesSlabMulticast).
+	magrtrsrvLog := func(t *testing.T, multicastIP string) RawLog {
+		return RawLog{
+			Line: `INFO:commands:Cmd. D [1051], N [sv7bc-slab027], M [set.rx.route], A [[[{'dest': {'output': 4, 'port_type': 1, 'stream_type': 2}, 'sources': [{'sfp': 1, 'multicast_ip': '` + multicastIP + `', 'udp_port': 5004, 'source_ips': ['10.12.42.89']}]}]]], K [{}]`,
+			Time: parseTime(t, "2026-08-23T04:00:12.600Z"),
+		}
+	}
+
+	t.Run("without magrtrsrv: hostname/DST# alone is enough, multicast comes from the slab logs' own ADDR field", func(t *testing.T) {
 		eng := newEngine(t)
 		logs := append(schedulerAndMagnum(t), slabLogs(t, "239.32.111.55")...)
 
@@ -128,28 +133,49 @@ func TestEndToEnd_UserSnippet(t *testing.T) {
 		require.Len(t, env.Records, 5)
 		require.Equal(t, map[string]int{"scheduler": 1, "magnum": 2, "slab": 2}, env.SourceCounts())
 		require.Equal(t, "239.32.111.55", env.Resolved.Multicast) // the only multicast source available
+
+		wantDuration := parseTime(t, "2026-08-23T04:00:12.653Z").Sub(parseTime(t, "2026-08-23T04:00:00.065Z"))
+		require.Equal(t, wantDuration, env.Duration())
+		require.Equal(t, 12_588*time.Millisecond, env.Duration())
+
+		ms, ok := env.SchedulerToSlabMillis()
+		require.True(t, ok)
+		require.EqualValues(t, 12_588, ms)
 	})
 
-	t.Run("with magrtrsrv: its multicast overwrites the slab logs' own ADDR value", func(t *testing.T) {
+	t.Run("with magrtrsrv reporting the same multicast: hostname/DST# plus multicast both match, slab logs still attach", func(t *testing.T) {
 		eng := newEngine(t)
-
-		magrtrsrv := RawLog{
-			Line: `INFO:commands:Cmd. D [1051], N [sv7bc-slab027], M [set.rx.route], A [[[{'dest': {'output': 4, 'port_type': 1, 'stream_type': 2}, 'sources': [{'sfp': 1, 'multicast_ip': '239.32.111.55', 'udp_port': 5004, 'source_ips': ['10.12.42.89']}]}]]], K [{}]`,
-			// Arrives before its slab logs, as the design assumes (though
-			// resolution doesn't depend on that order — see correlator_test.go).
-			Time: parseTime(t, "2026-08-23T04:00:12.600Z"),
-		}
-		logs := append(schedulerAndMagnum(t), magrtrsrv)
-		// A deliberately different ADDR from magrtrsrv's multicast_ip, so the
-		// assertion below actually proves precedence rather than agreeing by
-		// coincidence.
-		logs = append(logs, slabLogs(t, "239.32.111.99")...)
+		logs := append(schedulerAndMagnum(t), magrtrsrvLog(t, "239.32.111.55"))
+		logs = append(logs, slabLogs(t, "239.32.111.55")...)
 
 		env := submitAndReceive(t, eng, logs)
 		assertCommon(t, env)
 
 		require.Len(t, env.Records, 6)
 		require.Equal(t, map[string]int{"scheduler": 1, "magnum": 2, "magrtrsrv": 1, "slab": 2}, env.SourceCounts())
-		require.Equal(t, "239.32.111.55", env.Resolved.Multicast) // magrtrsrv's, not the slab logs' "239.32.111.99"
+		require.Equal(t, "239.32.111.55", env.Resolved.Multicast)
+
+		ms, ok := env.SchedulerToSlabMillis()
+		require.True(t, ok)
+		require.EqualValues(t, 12_588, ms) // unaffected by the magrtrsrv record — it only counts scheduler and slab
+	})
+
+	t.Run("with magrtrsrv reporting a different multicast: the slab logs never correlate at all", func(t *testing.T) {
+		eng := newEngine(t)
+		logs := append(schedulerAndMagnum(t), magrtrsrvLog(t, "239.32.111.55"))
+		// A deliberately different ADDR from magrtrsrv's multicast_ip: hostname
+		// and DST# still match, but that's no longer sufficient once magrtrsrv
+		// has reported a multicast for this destination.
+		logs = append(logs, slabLogs(t, "239.32.111.99")...)
+
+		env := submitAndReceive(t, eng, logs)
+		assertCommon(t, env)
+
+		require.Len(t, env.Records, 4) // scheduler + 2 magnum + magrtrsrv; neither slab log attached
+		require.Equal(t, map[string]int{"scheduler": 1, "magnum": 2, "magrtrsrv": 1}, env.SourceCounts())
+		require.Equal(t, "239.32.111.55", env.Resolved.Multicast) // magrtrsrv's value, untouched by the rejected slab logs
+
+		_, ok := env.SchedulerToSlabMillis()
+		require.False(t, ok) // no slab record attached at all
 	})
 }
