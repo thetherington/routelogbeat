@@ -10,15 +10,20 @@ import (
 // TestEndToEnd_UserSnippet replays the log lines from the design discussion
 // — one scheduler, two magnum, two slab, optionally one magrtrsrv — through
 // a real Engine with RealClock, and checks the resulting envelope end to
-// end. This is the plan's Verification step 4, split into the cases that
-// matter for how a slab record resolves and what ends up in
-// Resolved.Multicast: without a magrtrsrv log (hostname/DST# alone is
-// enough, and the slab logs' own ADDR field is the only multicast source);
-// with one reporting the same multicast the slab logs carry (both checks
-// pass, so they still attach); and with one reporting something different
-// (the slab logs then never correlate at all — see correlator_test.go's
-// TestEngine_MagrtrsrvDictatesSlabMulticast for the engine-level coverage of
-// this rule).
+// end. This is the plan's Verification step 4, with subtests for the cases
+// that matter:
+//
+//   - how a slab record resolves and what ends up in Resolved.Multicast:
+//     without a magrtrsrv log (hostname/DST# alone is enough, and the slab
+//     logs' own ADDR field is the only multicast source); with one reporting
+//     the same multicast the slab logs carry (both checks pass, so they
+//     still attach); and with one reporting something different (the slab
+//     logs then never correlate at all — see correlator_test.go's
+//     TestEngine_MagrtrsrvDictatesSlabMulticast for the engine-level
+//     coverage of this rule).
+//   - what happens with no scheduler log at all: magnum opens a partial
+//     envelope instead, and SchedulerToSlabMillis becomes unavailable even
+//     though Duration() still works fine.
 func TestEndToEnd_UserSnippet(t *testing.T) {
 	const (
 		src = "3fd8c558-c7dd-5ca4-8cb1-3f5d2a525c6f"
@@ -52,13 +57,17 @@ func TestEndToEnd_UserSnippet(t *testing.T) {
 		return eng
 	}
 
-	// schedulerAndMagnum are the first three logs, identical in both cases.
-	schedulerAndMagnum := func(t *testing.T) []RawLog {
+	schedulerLog := func(t *testing.T) RawLog {
+		return RawLog{
+			Line: `main: Sending route: [[{'src': ['` + src + `'], 'dst': ['` + dst + `']}]]`,
+			Time: parseTime(t, "2026-08-23T04:00:00.065Z"),
+		}
+	}
+
+	// magnumLogs are the two magnum lines, used both on their own (no
+	// scheduler) and prefixed with schedulerLog via schedulerAndMagnum.
+	magnumLogs := func(t *testing.T) []RawLog {
 		return []RawLog{
-			{
-				Line: `main: Sending route: [[{'src': ['` + src + `'], 'dst': ['` + dst + `']}]]`,
-				Time: parseTime(t, "2026-08-23T04:00:00.065Z"),
-			},
 			{
 				Line: `INFO:jsonrpc:Subscribe request. Dst [('` + dst + `',)], Sub [('` + src + `',)], User [None], ID [None]`,
 				Time: parseTime(t, "2026-08-23T04:00:02.506Z"),
@@ -68,6 +77,10 @@ func TestEndToEnd_UserSnippet(t *testing.T) {
 				Time: parseTime(t, "2026-08-23T04:00:02.509Z"),
 			},
 		}
+	}
+
+	schedulerAndMagnum := func(t *testing.T) []RawLog {
+		return append([]RawLog{schedulerLog(t)}, magnumLogs(t)...)
 	}
 
 	// slabLogs carries its own ADDR value so both subtests can use a
@@ -177,5 +190,32 @@ func TestEndToEnd_UserSnippet(t *testing.T) {
 
 		_, ok := env.SchedulerToSlabMillis()
 		require.False(t, ok) // no slab record attached at all
+	})
+
+	t.Run("without scheduler: magnum opens a partial envelope, SchedulerToSlabMillis is unavailable", func(t *testing.T) {
+		eng := newEngine(t)
+		logs := append(magnumLogs(t), slabLogs(t, "239.32.111.55")...)
+
+		env := submitAndReceive(t, eng, logs)
+
+		require.Equal(t, Key{Src: src, Dst: dst}, env.Key)
+		require.Equal(t, KindMagnumSubscribe, env.OpenedBy) // "Subscribe request.", the first of the two magnum lines
+		require.True(t, env.Partial)                        // the configured opener (scheduler) never arrived
+		require.Equal(t, ReasonCloseAfter, env.Reason)
+
+		require.Len(t, env.Records, 4) // 2 magnum + 2 slab; no scheduler record at all
+		require.Equal(t, map[string]int{"magnum": 2, "slab": 2}, env.SourceCounts())
+
+		// Duration still spans first-to-last correlated log — just anchored on
+		// magnum's time instead of scheduler's, since there is no scheduler
+		// record here at all.
+		wantDuration := parseTime(t, "2026-08-23T04:00:12.653Z").Sub(parseTime(t, "2026-08-23T04:00:02.506Z"))
+		require.Equal(t, wantDuration, env.Duration())
+
+		// SchedulerToSlabMillis specifically requires a scheduler record, so
+		// it's unavailable here even though Duration() above is perfectly
+		// well-defined — this is the divergence discussed for this method.
+		_, ok := env.SchedulerToSlabMillis()
+		require.False(t, ok)
 	})
 }
