@@ -1,6 +1,35 @@
 routelogbeat:
-  period: 1s
-
+  tags:
+    - "MES"
+    - "IPAN"
+  physical_route_tags:
+    - "SLAB"
+  mapping:
+    nameset: "Broadview"
+    default: ""
+  api:
+    url: "https://129.153.131.121/graphql/v1.1"
+    notifications: true
+    limit: 2000
+    auth:
+      client_id: "insite-poller"
+      client_secret: "QdS1US0v2xABh4d5CliQAWZrmSGPMOxd"
+      token_url: "https://129.153.131.121/auth/realms/magnum/protocol/openid-connect/token"
+  rabbitmq_client:
+    host: "localhost"
+    port: 8910
+    vhost: "/"
+    username: "insite"
+    password: "abacus"
+    exchange: "x.routelogbeat.logs"
+    queue: "q.routelogbeat.logs"
+    routing_key: "log.data"
+  correlator:
+    open_on: "scheduler"
+    close_after: 2m
+    sweep_interval: 1s
+    max_open: 4096
+    pending_wait: 5s
 processors:
   - add_cloud_metadata: ~
   - add_docker_metadata: ~

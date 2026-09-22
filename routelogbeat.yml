@@ -3,9 +3,66 @@
 ############################# Routelogbeat ######################################
 
 routelogbeat:
-  # Defines how often an event is sent to the output
-  period: 1s
+  # Tags to collect route data from
+  tags:
+    - "MES"
+    - "IPAN"
 
+  # Tags for physical route subscriptions to map sub destinations to physical devices
+  physical_route_tags:
+    - "SLAB"
+
+  # (optional) Nameset to select from for the "source" and "destination", value and default value for emptry route
+  mapping:
+    nameset: "Broadview"
+    default: ""
+
+  # Magnum API
+  api:
+    url: "https://129.153.131.121/graphql/v1.1"
+    
+    # Get route notifications via the subscriptions
+    notifications: true
+
+    # Limit the number of destinations in the API query results
+    limit: 2000
+    
+    # Magnum OIDC Authentication
+    auth:
+      client_id: "insite-poller"
+      client_secret: "QdS1US0v2xABh4d5CliQAWZrmSGPMOxd"
+      token_url: "https://129.153.131.121/auth/realms/magnum/protocol/openid-connect/token"
+
+  # RabbitMQ client configuration
+  rabbitmq_client:
+    host: "10.9.0.69"
+    port: 8910
+    vhost: "/"
+    username: "insite"
+    password: "abacus"
+    exchange: "x.routelogbeat.logs"
+    queue: "q.routelogbeat.logs"
+    routing_key: "log.data"
+
+  # Correlation engine: groups related route log lines into timed event envelopes.
+  correlator:
+    # Which log kind opens a new envelope:
+    #   "scheduler" | "magnum_subscribe" | "magnum_complete"
+    open_on: "scheduler"
+
+    # How long after the opening log an envelope stays open before it is
+    # closed and dispatched. The event duration is measured across this window.
+    close_after: 2m
+
+    # How often expired envelopes are swept and dispatched.
+    sweep_interval: 1s
+
+    # Safety cap on simultaneously open envelopes.
+    max_open: 4096
+
+    # How long a slab/magrtrsrv log whose destination isn't in the lookup map
+    # yet waits for it to catch up before it is dropped.
+    pending_wait: 5s
 # ================================== General ===================================
 
 # The name of the shipper that publishes the network data. It can be used to group
