@@ -127,20 +127,31 @@ type Stats struct {
 	Submitted        int64 // every RawLog the actor has processed
 	Discarded        int64 // no parser matched (expected to dominate)
 	ParseErrors      int64 // a parser matched the shape but couldn't extract the body
-	UnresolvedSlab   int64 // slab/magrtrsrv record with no matching open envelope yet
-	PendingDropped   int64 // a buffered record's pending_wait expired
+	UnresolvedSlab   int64 // slab/magrtrsrv record with no matching open envelope yet (all reasons)
+	PendingDropped   int64 // a buffered record's pending_wait expired (all reasons)
 	EnvelopesOpened  int64
 	EnvelopesClosed  int64
 	MaxOpenEvictions int64
 	Sweeps           int64 // completed sweep() calls; useful to fence tests on a tick finishing
 	Ingests          int64 // completed ingest() calls (regardless of outcome); useful to fence
 	// tests on a Submit()'d RawLog having been fully parsed, resolved, and routed
+
+	// UnresolvedSlab / PendingDropped broken down by MissReason. UnresolvedSlab
+	// counts a record once, at the reason it first missed; PendingDropped counts
+	// it once, at the reason it still had when pending_wait expired (which can
+	// differ, e.g. it first missed for lack of a slab match and finally for a
+	// multicast conflict).
+	UnresolvedNoSlabMatch       int64
+	UnresolvedMulticastConflict int64
+	DroppedNoSlabMatch          int64
+	DroppedMulticastConflict    int64
 }
 
 // pendingRecord is a slab/magrtrsrv Record buffered because no open envelope
 // yet matches its {hostname, DstNum}.
 type pendingRecord struct {
 	rec      Record
+	since    time.Time
 	deadline time.Time
 }
 
@@ -150,7 +161,8 @@ type Engine struct {
 	cfg      Config
 	parsers  []Parser
 	resolver Resolver
-	meta     MetadataResolver // nil if not configured
+	meta     MetadataResolver   // nil if not configured
+	observer UnresolvedObserver // nil if not configured — see WithUnresolvedObserver
 	clock    Clock
 
 	in     chan RawLog
@@ -312,10 +324,10 @@ func (e *Engine) ingest(raw RawLog) {
 
 	for _, rec := range recs {
 		if rec.Kind == KindSlab || rec.Kind == KindMagrtrsrv {
-			key, ok := e.resolveMember(rec)
-			if !ok {
-				e.stats.unresolvedSlab.Add(1)
-				e.bufferPending(rec)
+			key, miss := e.resolveMember(rec)
+			if miss != MissNone {
+				e.stats.countUnresolved(miss)
+				e.bufferPending(rec, miss)
 				continue
 			}
 			rec.Key = &key
@@ -336,18 +348,21 @@ func (e *Engine) ingest(raw RawLog) {
 // same multicast to resolve: hostname/DST# plus multicast together, for
 // extra specificity. A slab record whose own ADDR conflicts with it is
 // treated as unresolved (buffers, eventually drops), not merely deprioritized.
-func (e *Engine) resolveMember(rec Record) (Key, bool) {
+//
+// The returned MissReason is MissNone when the record resolved, otherwise why
+// it didn't.
+func (e *Engine) resolveMember(rec Record) (Key, MissReason) {
 	ref := SlabRef{Hostname: rec.Slab.Hostname, DstNum: rec.Slab.DstNum}
 	key, ok := e.slabIndex[ref]
 	if !ok {
-		return Key{}, false
+		return Key{}, MissNoSlabMatch
 	}
 	if rec.Kind == KindSlab {
 		if env, open := e.open[key]; open && env.Resolved.Multicast != "" && rec.Slab.Multicast != env.Resolved.Multicast {
-			return Key{}, false
+			return Key{}, MissMulticastConflict
 		}
 	}
-	return key, true
+	return key, MissNone
 }
 
 // route attaches rec to its envelope, opening one first if rec's Kind is
@@ -482,13 +497,17 @@ func (e *Engine) sweep(now time.Time) {
 	}
 	kept := e.pending[:0]
 	for _, pr := range e.pending {
-		if key, ok := e.resolveMember(pr.rec); ok {
+		key, miss := e.resolveMember(pr.rec)
+		if miss == MissNone {
 			pr.rec.Key = &key
 			e.route(pr.rec)
 			continue
 		}
 		if now.After(pr.deadline) {
-			e.stats.pendingDropped.Add(1)
+			e.stats.countDropped(miss)
+			if e.observer != nil {
+				e.notifyUnresolved(pr.rec, miss, true, now.Sub(pr.since))
+			}
 			continue
 		}
 		kept = append(kept, pr)
@@ -503,14 +522,22 @@ func (e *Engine) finishSweep() { e.stats.sweeps.Add(1) }
 
 // bufferPending holds rec, a slab/magrtrsrv record with no matching open
 // envelope yet, for up to PendingWait before it is dropped.
-func (e *Engine) bufferPending(rec Record) {
+func (e *Engine) bufferPending(rec Record, miss MissReason) {
 	if e.cfg.PendingWait <= 0 {
-		e.stats.pendingDropped.Add(1)
+		e.stats.countDropped(miss)
+		if e.observer != nil {
+			e.notifyUnresolved(rec, miss, true, 0)
+		}
 		return
 	}
+	if e.observer != nil {
+		e.notifyUnresolved(rec, miss, false, 0)
+	}
+	now := e.clock.Now()
 	e.pending = append(e.pending, pendingRecord{
 		rec:      rec,
-		deadline: e.clock.Now().Add(e.cfg.PendingWait),
+		since:    now,
+		deadline: now.Add(e.cfg.PendingWait),
 	})
 }
 
@@ -525,7 +552,7 @@ func (e *Engine) drainPendingFor(key Key) {
 	}
 	kept := e.pending[:0]
 	for _, pr := range e.pending {
-		if k, ok := e.resolveMember(pr.rec); ok && k == key {
+		if k, miss := e.resolveMember(pr.rec); miss == MissNone && k == key {
 			pr.rec.Key = &k
 			e.route(pr.rec)
 			continue

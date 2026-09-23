@@ -63,12 +63,12 @@ var DefaultConfig = Config{
 	Tags:              []string{},
 	PhysicalRouteTags: []string{},
 	API: MagnumAPI{
-		Url:   "https://129.153.131.121/graphql/v1.1",
-		Limit: 2000,
+		Url:   "https://129.213.88.5/graphql/v1.1",
+		Limit: 500,
 		Auth: MagnumOIDCAuth{
 			ClientID:     "insite-poller",
-			ClientSecret: "QdS1US0v2xABh4d5CliQAWZrmSGPMOxd",
-			TokenURL:     "https://129.153.131.121/auth/realms/magnum/protocol/openid-connect/token",
+			ClientSecret: "gpJ2WSbjBOD1HoZxpTYGaqKdqeBD1mll",
+			TokenURL:     "https://129.213.88.5/auth/realms/magnum/protocol/openid-connect/token",
 		},
 	},
 	RabbitMQClient: RabbitMQClient{

@@ -1,16 +1,16 @@
 package magnumclient
 
 type QueryTerminals struct {
-	Terminals Terminals `graphql:"terminals(input: {filters: [{id: \"isDst\", booleanValue: true}, {id:\"isSub\", booleanValue: true}, {id: \"tags\", listIncludes: [$tag]}]})"`
+	Terminals Terminals `graphql:"terminals(input: {filters: [{id: \"isTlr\", booleanValue: true}, {id: \"isDst\", booleanValue: true}, {id:\"isSub\", booleanValue: $isSub}, {id: \"tags\", listIncludes: [$tag]}]})"`
 }
 
 type SubscriptionTerminalsUpdated struct {
-	TerminalsUpdated []Edge `graphql:"terminalsUpdated(input: {filters: [{id: \"isDst\", booleanValue: true}, {id:\"isSub\", booleanValue: $isSub}, {id: \"tags\", listIncludes: [$tag]}]})"`
+	TerminalsUpdated []Edge `graphql:"terminalsUpdated(input: {filters: [{id: \"isTlr\", booleanValue: true}, {id: \"isDst\", booleanValue: true}, {id:\"isSub\", booleanValue: $isSub}, {id: \"tags\", listIncludes: [$tag]}]})"`
 }
 
 type Terminals struct {
 	TotalCount int
-	Edges      []Edge `graphql:"edges(limit: $limit)"`
+	Edges      []Edge `graphql:"edges(limit: $limit, offset: $offset)"`
 }
 
 type Edge struct {

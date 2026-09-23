@@ -87,6 +87,7 @@ func TestMagnumParser(t *testing.T) {
 		require.Equal(t, KindMagnumSubscribe, recs[0].Kind)
 		require.Equal(t, &Key{Src: testSrc, Dst: testDst}, recs[0].Key)
 		require.Equal(t, "subscribe_request", recs[0].Fields["magnum_variant"])
+		require.Equal(t, "dst_sub", recs[0].Fields["subscribe_shape"])
 	})
 
 	t.Run("variant A multi-entry list is a parse error", func(t *testing.T) {
@@ -208,5 +209,66 @@ func TestMagrtrsrvParser(t *testing.T) {
 	t.Run("unrelated line does not match", func(t *testing.T) {
 		_, err := p.Parse(RawLog{Line: "some unrelated log line", Time: testTime})
 		require.ErrorIs(t, err, ErrNoMatch)
+	})
+}
+
+// The second "Subscribe request." shape carries a Subscription [{'dst': [...],
+// 'sub_dst': [...]}] route object instead of Dst [...] / Sub [...] fields.
+func TestMagnumParser_SubscribeSubscriptionShape(t *testing.T) {
+	p := magnumParser{}
+
+	const (
+		dst = "af2925a1-a72f-5355-a5d5-c3ec7f5de929"
+		sub = "d92a097a-9ee7-54ab-b255-7c101ec80b93"
+		id  = "0299cc2e-4ffe-4acd-8c0d-570da767a37f"
+	)
+
+	t.Run("real sample line", func(t *testing.T) {
+		line := "INFO:jsonrpc:Subscribe request. Subscription [{'dst': ['" + dst + "'], 'sub_dst': ['" + sub + "']}], User [admin], ID [" + id + "]"
+		recs, err := p.Parse(RawLog{Line: line, Time: testTime})
+		require.NoError(t, err)
+		require.Len(t, recs, 1)
+		require.Equal(t, KindMagnumSubscribe, recs[0].Kind)
+		require.Equal(t, &Key{Src: sub, Dst: dst}, recs[0].Key) // Src is sub_dst; the ID [...] UUID is not part of the key
+		require.Equal(t, "subscribe_request", recs[0].Fields["magnum_variant"])
+		require.Equal(t, "subscription", recs[0].Fields["subscribe_shape"])
+	})
+
+	t.Run("both shapes of the same route yield the same key", func(t *testing.T) {
+		shape1 := "INFO:jsonrpc:Subscribe request. Dst [('" + dst + "',)], Sub [('" + sub + "',)], User [None], ID [None]"
+		shape2 := "INFO:jsonrpc:Subscribe request. Subscription [{'dst': ['" + dst + "'], 'sub_dst': ['" + sub + "']}], User [admin], ID [" + id + "]"
+
+		r1, err := p.Parse(RawLog{Line: shape1, Time: testTime})
+		require.NoError(t, err)
+		r2, err := p.Parse(RawLog{Line: shape2, Time: testTime})
+		require.NoError(t, err)
+		require.Equal(t, r1[0].Key, r2[0].Key)
+	})
+
+	t.Run("multiple route objects yield one record each", func(t *testing.T) {
+		dst2, sub2 := "55555555-5555-5555-5555-555555555555", "44444444-4444-4444-4444-444444444444"
+		line := "INFO:jsonrpc:Subscribe request. Subscription [{'dst': ['" + dst + "'], 'sub_dst': ['" + sub + "']}, {'dst': ['" + dst2 + "'], 'sub_dst': ['" + sub2 + "']}], User [admin], ID [" + id + "]"
+		recs, err := p.Parse(RawLog{Line: line, Time: testTime})
+		require.NoError(t, err)
+		require.Len(t, recs, 2)
+		require.Equal(t, &Key{Src: sub, Dst: dst}, recs[0].Key)
+		require.Equal(t, &Key{Src: sub2, Dst: dst2}, recs[1].Key)
+		recs[0].Fields["x"] = 1 // records must not share a Fields map
+		require.NotContains(t, recs[1].Fields, "x")
+	})
+
+	t.Run("multi-entry dst list is a parse error", func(t *testing.T) {
+		other := "44444444-4444-4444-4444-444444444444"
+		line := "INFO:jsonrpc:Subscribe request. Subscription [{'dst': ['" + dst + "', '" + other + "'], 'sub_dst': ['" + sub + "']}], User [admin], ID [" + id + "]"
+		_, err := p.Parse(RawLog{Line: line, Time: testTime})
+		require.Error(t, err)
+		require.NotEqual(t, ErrNoMatch, err)
+	})
+
+	t.Run("no route object is a parse error", func(t *testing.T) {
+		line := "INFO:jsonrpc:Subscribe request. Subscription [], User [admin], ID [" + id + "]"
+		_, err := p.Parse(RawLog{Line: line, Time: testTime})
+		require.Error(t, err)
+		require.NotEqual(t, ErrNoMatch, err)
 	})
 }

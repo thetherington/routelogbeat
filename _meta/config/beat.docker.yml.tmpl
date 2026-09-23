@@ -1,7 +1,7 @@
 routelogbeat:
   tags:
-    - "MES"
-    - "IPAN"
+    - "SOURCE"
+    - "DESTINATION"
   physical_route_tags:
     - "SLAB"
   mapping:
@@ -10,7 +10,7 @@ routelogbeat:
   api:
     url: "https://129.153.131.121/graphql/v1.1"
     notifications: true
-    limit: 2000
+    limit: 500
     auth:
       client_id: "insite-poller"
       client_secret: "QdS1US0v2xABh4d5CliQAWZrmSGPMOxd"

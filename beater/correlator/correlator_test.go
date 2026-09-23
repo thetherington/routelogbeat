@@ -103,6 +103,12 @@ func magnumBLine(src, dst string) string {
 	return `INFO:subscription:Subscription Request Complete: Routes [1-1]: [{'dst': ['` + dst + `'], 'sub_dst': ['` + src + `']}]`
 }
 
+// magnumSubscriptionLine is the second "Subscribe request." shape, carrying a
+// Subscription [{'dst': ..., 'sub_dst': ...}] route object.
+func magnumSubscriptionLine(src, dst string) string {
+	return `INFO:jsonrpc:Subscribe request. Subscription [{'dst': ['` + dst + `'], 'sub_dst': ['` + src + `']}], User [admin], ID [0299cc2e-4ffe-4acd-8c0d-570da767a37f]`
+}
+
 func slabLine(hostname string, dstNum int, multicast string) string {
 	return fmt.Sprintf(`%s [23.08.2026 04:00:12.641] W: exlwrp-lwrp: info: AuditSet:DST %d ADDR:"%s;sync-time=3000"`, hostname, dstNum, multicast)
 }
@@ -602,4 +608,29 @@ func TestNew_RejectsMemberOnlyOpenOn(t *testing.T) {
 
 	_, err = New(Config{OpenOn: KindMagrtrsrv})
 	require.Error(t, err)
+}
+
+// A scheduler-opened envelope must also collect the "Subscribe request." line
+// in its Subscription [...] shape — same key as the scheduler's route.
+func TestEngine_SubscribeSubscriptionShapeAttachesToSchedulerEnvelope(t *testing.T) {
+	eng, clock := newTestEngine(t, nil)
+
+	t0 := testTime
+	submitAll(t, eng,
+		RawLog{Line: schedulerLine(testSrc, testDst), Time: t0},
+		RawLog{Line: magnumSubscriptionLine(testSrc, testDst), Time: t0.Add(2 * time.Second)},
+		RawLog{Line: magnumBLine(testSrc, testDst), Time: t0.Add(3 * time.Second)},
+	)
+	require.EqualValues(t, 1, eng.Stats().EnvelopesOpened) // one envelope, not one per line
+	require.EqualValues(t, 0, eng.Stats().ParseErrors)
+
+	clock.Advance(time.Minute)
+	env := recvEnvelope(t, eng)
+
+	require.Equal(t, KindScheduler, env.OpenedBy)
+	require.False(t, env.Partial)
+	require.Len(t, env.Records, 3)
+	require.Equal(t, map[string]int{"scheduler": 1, "magnum": 2}, env.SourceCounts())
+	require.Equal(t, KindMagnumSubscribe, env.Records[1].Kind)
+	require.Equal(t, "subscription", env.Records[1].Fields["subscribe_shape"])
 }

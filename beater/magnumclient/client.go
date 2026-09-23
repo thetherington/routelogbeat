@@ -11,6 +11,12 @@ const (
 	CLIENT_TIMEOUT = 10 // time in seconds
 )
 
+type Client interface {
+	Close()
+	RunSubscriptions(done chan struct{})
+	QueryTerminals(tag string, limit int, isSub bool, fn func(terminals []Edge) error) error
+}
+
 type magnumClient struct {
 	httpClient  *http.Client
 	queryClient *graphql.Client
@@ -19,12 +25,12 @@ type magnumClient struct {
 }
 
 type ClientCfg struct {
-	apiUrl string
+	ApiUrl string
 }
 
-func NewMagnumClient(httpClient *http.Client, cfg *ClientCfg) *magnumClient {
+func NewMagnumClient(httpClient *http.Client, cfg *ClientCfg) Client {
 	subClient := graphql.
-		NewSubscriptionClient(getWssURL(cfg.apiUrl)).
+		NewSubscriptionClient(getWssURL(cfg.ApiUrl)).
 		WithWebSocketOptions(graphql.WebsocketOptions{
 			HTTPClient: httpClient,
 		}).
@@ -42,7 +48,7 @@ func NewMagnumClient(httpClient *http.Client, cfg *ClientCfg) *magnumClient {
 			logp.Info("subcription terminated %s", sub.GetID())
 		})
 
-	queryClient := graphql.NewClient(cfg.apiUrl, httpClient)
+	queryClient := graphql.NewClient(cfg.ApiUrl, httpClient)
 
 	return &magnumClient{
 		httpClient:  httpClient,

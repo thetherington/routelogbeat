@@ -2,15 +2,24 @@ package beater
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/elastic/beats/v7/libbeat/beat"
 	"github.com/elastic/elastic-agent-libs/config"
 	"github.com/elastic/elastic-agent-libs/logp"
 
+	"github.com/thetherington/routelogbeat/beater/cache"
 	"github.com/thetherington/routelogbeat/beater/correlator"
+	"github.com/thetherington/routelogbeat/beater/httpclient"
+	"github.com/thetherington/routelogbeat/beater/magnumclient"
 	"github.com/thetherington/routelogbeat/beater/rabbitmqclient"
 	routelogCfg "github.com/thetherington/routelogbeat/config"
+)
+
+var (
+	SlabMap = cache.NewCacheMap[string, Slabs](0)
 )
 
 // routelogbeat configuration.
@@ -20,7 +29,7 @@ type routelogbeat struct {
 	client         beat.Client
 	rabbitmqClient *rabbitmqclient.Client
 	engine         *correlator.Engine
-	resolver       *correlator.MapResolver
+	magnumClient   magnumclient.Client
 }
 
 // New creates an instance of routelogbeat.
@@ -29,6 +38,35 @@ func New(b *beat.Beat, cfg *config.C) (beat.Beater, error) {
 	if err := cfg.Unpack(&c); err != nil {
 		return nil, fmt.Errorf("Error reading config file: %v", err)
 	}
+
+	// Validate there is atleast 1 tag
+	if len(c.Tags) < 1 {
+		return nil, errors.New("beat requires atleast 1 tag in the configuration")
+	}
+
+	// Validate if mapping is enabled then the nameset is not blank
+	if c.Mapping != nil && c.Mapping.Nameset == "" {
+		return nil, errors.New("nameset cannot be blank if mapping is enabled")
+	}
+
+	done := make(chan struct{})
+
+	// create generic http client interface and authenticate with magnum
+	// http client contains a cookieJar that is updated by a goroutine
+	httpClient, err := httpclient.NewHTTPClient(&httpclient.MagnumAuthCredentials{
+		ClientID:     c.API.Auth.ClientID,
+		ClientSecret: c.API.Auth.ClientSecret,
+		TokenURL:     c.API.Auth.TokenURL,
+		Done:         done,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error authenticating with magnum: %v", err)
+	}
+
+	// create magnum client
+	magnumClient := magnumclient.NewMagnumClient(httpClient, &magnumclient.ClientCfg{
+		ApiUrl: c.API.Url,
+	})
 
 	rbcfg := rabbitmqclient.Config{
 		Host:              c.RabbitMQClient.Host,
@@ -45,32 +83,32 @@ func New(b *beat.Beat, cfg *config.C) (beat.Beater, error) {
 		ReconnectInterval: rabbitmqclient.DefaultConfig().ReconnectInterval,
 	}
 
+	// Parse and validate the correlator's "open_on" configuration.
 	openOn, ok := correlator.ParseKind(c.Correlator.OpenOn)
 	if !ok || openOn == correlator.KindSlab || openOn == correlator.KindMagrtrsrv {
 		return nil, fmt.Errorf("invalid correlator.open_on: %q", c.Correlator.OpenOn)
 	}
 
-	// resolver is populated by the main program from wherever it learns
-	// route/destination -> slab facts; that source is not wired up yet
-	// (Phase 1 of the correlation engine — see the design notes).
-	resolver := correlator.NewMapResolver()
+	// Set up the resolver for the correlator using the SlabMapResolver function.
+	resolver := correlator.ResolverFunc(SlabMapResolver)
+
 	engine, err := correlator.New(correlator.Config{
 		OpenOn:        openOn,
 		CloseAfter:    c.Correlator.CloseAfter,
 		SweepInterval: c.Correlator.SweepInterval,
 		MaxOpen:       c.Correlator.MaxOpen,
 		PendingWait:   c.Correlator.PendingWait,
-	}, correlator.WithResolver(resolver), correlator.WithClock(correlator.RealClock{}))
+	}, correlatorOptions(resolver)...)
 	if err != nil {
 		return nil, fmt.Errorf("correlator: %w", err)
 	}
 
 	bt := &routelogbeat{
-		done:           make(chan struct{}),
+		done:           done,
 		config:         c,
 		rabbitmqClient: rabbitmqclient.NewClient(rbcfg),
 		engine:         engine,
-		resolver:       resolver,
+		magnumClient:   magnumClient,
 	}
 
 	return bt, nil
@@ -90,6 +128,15 @@ func (bt *routelogbeat) Run(b *beat.Beat) error {
 	if err != nil {
 		return err
 	}
+
+	// Query the terminals with PhysicalRouteTags from the magnum client before entering the main loop.
+	err = bt.magnumClient.QueryTerminals(bt.config.PhysicalRouteTags[0], bt.config.API.Limit, false, bt.ProcessSlabTerminal)
+	if err != nil {
+		return err
+	}
+
+	// Start a goroutine to periodically log correlator engine statistics.
+	go bt.CorrelatorEngineStats()
 
 	for {
 		select {
@@ -117,6 +164,10 @@ func (bt *routelogbeat) Run(b *beat.Beat) error {
 				continue
 			}
 
+			// if logMessage.Annotation.General.DeviceName != "" {
+			// 	logp.Info("routelogbeat: device name=%s log_message=%v", logMessage.Annotation.General.DeviceName, logMessage)
+			// }
+
 			if raw, ok := toRawLog(&logMessage); ok {
 				bt.engine.Submit(raw) // the engine matches it against a parser, or discards it
 			}
@@ -140,13 +191,50 @@ func (bt *routelogbeat) logEnvelope(env *correlator.Envelope) {
 		"logs=%d sources=%v duration=%s scheduler_to_slab=%s reason=%s",
 		env.Key.Src, env.Key.Dst, env.OpenedBy.Family(), env.Partial,
 		len(env.Records), env.SourceCounts(), env.Duration(), schedToSlab, env.Reason)
+
+	// print the env.Records
+	for _, record := range env.Records {
+		logp.Info("routelogbeat: record=%v", record)
+	}
+
+	// print the resolved slabs from the envelope's records
+	logp.Info("routelogbeat: resolved slabs from envelope's records %v", env.Resolved.Slabs)
+
 }
 
 // Stop stops routelogbeat.
 func (bt *routelogbeat) Stop() {
 	bt.rabbitmqClient.Close() // stop input first
 	bt.engine.Close()         // then the correlation engine
+	bt.magnumClient.Close()   // close the magnum client
 
 	bt.client.Close()
 	close(bt.done)
+}
+
+func (bt *routelogbeat) CorrelatorEngineStats() {
+	statsTicker := time.NewTicker(time.Minute)
+	defer statsTicker.Stop()
+
+	for {
+		select {
+		case <-bt.done:
+			bt.logStats() // final totals on shutdown
+			return
+
+		case <-statsTicker.C:
+			bt.logStats()
+		}
+	}
+}
+
+func (bt *routelogbeat) logStats() {
+	s := bt.engine.Stats()
+	logp.Info("correlator: submitted=%d discarded=%d parse_errors=%d unresolved_slab=%d "+
+		"(no_slab_match=%d multicast_conflict=%d) pending_dropped=%d "+
+		"(no_slab_match=%d multicast_conflict=%d) envelopes_opened=%d envelopes_closed=%d open=%d max_open_evictions=%d",
+		s.Submitted, s.Discarded, s.ParseErrors, s.UnresolvedSlab,
+		s.UnresolvedNoSlabMatch, s.UnresolvedMulticastConflict, s.PendingDropped,
+		s.DroppedNoSlabMatch, s.DroppedMulticastConflict, s.EnvelopesOpened, s.EnvelopesClosed,
+		s.EnvelopesOpened-s.EnvelopesClosed, s.MaxOpenEvictions)
 }

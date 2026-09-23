@@ -7,34 +7,41 @@ import (
 	"time"
 )
 
-func (c *magnumClient) QueryTerminals(tag string, limit int, fn func(terminals []Edge) error) error {
+func (c *magnumClient) QueryTerminals(tag string, limit int, isSub bool, fn func(terminals []Edge) error) error {
 	// variables
 	variables := map[string]any{
-		"tag":   strconv.Quote(tag),
-		"limit": limit,
+		"tag":    strconv.Quote(tag),
+		"limit":  limit,
+		"offset": 0,
+		"isSub":  isSub,
 	}
 
-	var query QueryTerminals
+	for offset := 0; ; offset += limit {
+		variables["offset"] = offset
 
-	err := func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), CLIENT_TIMEOUT*time.Second)
-		defer cancel()
+		var query QueryTerminals
 
-		err := c.queryClient.Query(ctx, &query, variables)
+		err := func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), CLIENT_TIMEOUT*time.Second)
+			defer cancel()
+
+			return c.queryClient.Query(ctx, &query, variables)
+		}()
 		if err != nil {
 			return err
 		}
 
-		return nil
-	}()
-	if err != nil {
-		return err
-	}
+		// check if there has been results to process
+		if query.Terminals.TotalCount < 1 {
+			return fmt.Errorf("Query Results is 0 for Tag: %s, %w", tag, ErrNoTerminals)
+		}
 
-	// check if there has been results to process
-	if query.Terminals.TotalCount < 1 {
-		return fmt.Errorf("Query Results is 0 for Tag: %s, %w", tag, ErrNoTerminals)
-	}
+		if err := fn(query.Terminals.Edges); err != nil {
+			return err
+		}
 
-	return fn(query.Terminals.Edges)
+		if offset+limit >= query.Terminals.TotalCount {
+			return nil
+		}
+	}
 }

@@ -7,3 +7,6 @@
 *.pyc
 busCache.gob
 scheduleCache.gob
+# build output and beat runtime state
+/routelogbeat
+/data/
