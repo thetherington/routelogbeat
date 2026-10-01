@@ -8,3 +8,10 @@ type Slab struct {
 	Device string
 	Output int
 }
+
+type Terminal struct {
+	Id    string
+	Name  string
+	Label string
+	Tag   string
+}

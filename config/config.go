@@ -51,7 +51,8 @@ type Correlator struct {
 }
 
 type Config struct {
-	Tags              []string       `config:"tags"`
+	Destinations      []string       `config:"destinations"`
+	Sources           []string       `config:"sources"`
 	PhysicalRouteTags []string       `config:"physical_route_tags"`
 	Mapping           *Mapping       `config:"mapping"`
 	API               MagnumAPI      `config:"api"`
@@ -60,7 +61,8 @@ type Config struct {
 }
 
 var DefaultConfig = Config{
-	Tags:              []string{},
+	Destinations:      []string{},
+	Sources:           []string{},
 	PhysicalRouteTags: []string{},
 	API: MagnumAPI{
 		Url:   "https://129.213.88.5/graphql/v1.1",

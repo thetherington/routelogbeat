@@ -7,6 +7,8 @@ import (
 	"github.com/hasura/go-graphql-client"
 )
 
+type CallbackOptions map[string]string
+
 const (
 	CLIENT_TIMEOUT = 10 // time in seconds
 )
@@ -14,7 +16,7 @@ const (
 type Client interface {
 	Close()
 	RunSubscriptions(done chan struct{})
-	QueryTerminals(tag string, limit int, isSub bool, fn func(terminals []Edge) error) error
+	QueryTerminals(tag string, limit int, isSub bool, fn func(terminals []Edge, opts ...CallbackOptions) error) error
 }
 
 type magnumClient struct {

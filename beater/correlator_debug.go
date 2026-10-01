@@ -17,9 +17,10 @@ const correlatorDebugSelector = "correlator"
 // resolver and the real clock, plus — only when debug logging is enabled for
 // the correlator selector — the unresolved-record observer. The observer walks
 // the slab index to build each event, so it is not installed otherwise.
-func correlatorOptions(resolver correlator.Resolver) []correlator.Option {
+func correlatorOptions(resolver correlator.Resolver, metadata correlator.MetadataResolver) []correlator.Option {
 	opts := []correlator.Option{
 		correlator.WithResolver(resolver),
+		correlator.WithMetadataResolver(metadata),
 		correlator.WithClock(correlator.RealClock{}),
 	}
 	if logp.IsDebug(correlatorDebugSelector) {

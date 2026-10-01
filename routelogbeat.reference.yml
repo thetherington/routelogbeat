@@ -3,10 +3,14 @@
 ############################# Routelogbeat ######################################
 
 routelogbeat:
-  # Tags to cache terminal data meta
-  tags:
+  # Tags to cache terminal data meta by destination
+  destinations:
+    - "IPAN"
+    - "MES"
+
+  # Tags to cache terminal data meta by source
+  sources:
     - "SOURCE"
-    - "DESTINATION"
 
   # Tags for slab terminal data cache
   physical_route_tags:

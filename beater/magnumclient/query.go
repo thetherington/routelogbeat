@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (c *magnumClient) QueryTerminals(tag string, limit int, isSub bool, fn func(terminals []Edge) error) error {
+func (c *magnumClient) QueryTerminals(tag string, limit int, isSub bool, fn func(terminals []Edge, opts ...CallbackOptions) error) error {
 	// variables
 	variables := map[string]any{
 		"tag":    strconv.Quote(tag),
@@ -36,7 +36,7 @@ func (c *magnumClient) QueryTerminals(tag string, limit int, isSub bool, fn func
 			return fmt.Errorf("Query Results is 0 for Tag: %s, %w", tag, ErrNoTerminals)
 		}
 
-		if err := fn(query.Terminals.Edges); err != nil {
+		if err := fn(query.Terminals.Edges, map[string]string{"tag": tag}); err != nil {
 			return err
 		}
 

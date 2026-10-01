@@ -19,7 +19,9 @@ import (
 )
 
 var (
-	SlabMap = cache.NewCacheMap[string, Slabs](0)
+	SlabMap        = cache.NewCacheMap[string, Slabs](0)
+	DestinationMap = cache.NewCacheMap[string, Terminal](0)
+	SourceMap      = cache.NewCacheMap[string, Terminal](0)
 )
 
 // routelogbeat configuration.
@@ -39,9 +41,9 @@ func New(b *beat.Beat, cfg *config.C) (beat.Beater, error) {
 		return nil, fmt.Errorf("Error reading config file: %v", err)
 	}
 
-	// Validate there is atleast 1 tag
-	if len(c.Tags) < 1 {
-		return nil, errors.New("beat requires atleast 1 tag in the configuration")
+	// Validate there is atleast 1 destination tag
+	if len(c.Destinations) < 1 || len(c.Sources) < 1 {
+		return nil, errors.New("beat requires atleast 1 destination and 1 source tag in the configuration")
 	}
 
 	// Validate if mapping is enabled then the nameset is not blank
@@ -92,13 +94,16 @@ func New(b *beat.Beat, cfg *config.C) (beat.Beater, error) {
 	// Set up the resolver for the correlator using the SlabMapResolver function.
 	resolver := correlator.ResolverFunc(SlabMapResolver)
 
+	// setup the metadata resolver for the correlator
+	metadata := correlator.MetadataResolverFunc(TerminalMapResolver)
+
 	engine, err := correlator.New(correlator.Config{
 		OpenOn:        openOn,
 		CloseAfter:    c.Correlator.CloseAfter,
 		SweepInterval: c.Correlator.SweepInterval,
 		MaxOpen:       c.Correlator.MaxOpen,
 		PendingWait:   c.Correlator.PendingWait,
-	}, correlatorOptions(resolver)...)
+	}, correlatorOptions(resolver, metadata)...)
 	if err != nil {
 		return nil, fmt.Errorf("correlator: %w", err)
 	}
@@ -135,6 +140,22 @@ func (bt *routelogbeat) Run(b *beat.Beat) error {
 		return err
 	}
 
+	// Query the terminals for Destinations tags
+	for _, tag := range bt.config.Destinations {
+		err = bt.magnumClient.QueryTerminals(tag, bt.config.API.Limit, true, bt.ProcessSubTerminal)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Query the terminals for Sources tags
+	for _, tag := range bt.config.Sources {
+		err = bt.magnumClient.QueryTerminals(tag, bt.config.API.Limit, true, bt.ProcessSubTerminal)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Start a goroutine to periodically log correlator engine statistics.
 	go bt.CorrelatorEngineStats()
 
@@ -164,10 +185,6 @@ func (bt *routelogbeat) Run(b *beat.Beat) error {
 				continue
 			}
 
-			// if logMessage.Annotation.General.DeviceName != "" {
-			// 	logp.Info("routelogbeat: device name=%s log_message=%v", logMessage.Annotation.General.DeviceName, logMessage)
-			// }
-
 			if raw, ok := toRawLog(&logMessage); ok {
 				bt.engine.Submit(raw) // the engine matches it against a parser, or discards it
 			}
@@ -187,19 +204,24 @@ func (bt *routelogbeat) logEnvelope(env *correlator.Envelope) {
 		schedToSlab = fmt.Sprintf("%dms", ms)
 	}
 
+	// Log the basic information about the closed envelope.
 	logp.Info("routelogbeat: envelope closed src=%s dst=%s opened_by=%s partial=%t "+
 		"logs=%d sources=%v duration=%s scheduler_to_slab=%s reason=%s",
 		env.Key.Src, env.Key.Dst, env.OpenedBy.Family(), env.Partial,
 		len(env.Records), env.SourceCounts(), env.Duration(), schedToSlab, env.Reason)
 
 	// print the env.Records
-	for _, record := range env.Records {
-		logp.Info("routelogbeat: record=%v", record)
-	}
+	// for _, record := range env.Records {
+	// 	logp.Info("routelogbeat: record=%v", record)
+	// }
 
 	// print the resolved slabs from the envelope's records
 	logp.Info("routelogbeat: resolved slabs from envelope's records %v", env.Resolved.Slabs)
 
+	// print the source and destination metadata resolved for the envelope's Key.
+	// Either side is nil if no MetadataResolver is configured or it had nothing
+	// for that UUID.
+	logp.Info("routelogbeat: resolved metadata src=%v dst=%v", env.Resolved.SrcMeta, env.Resolved.DstMeta)
 }
 
 // Stop stops routelogbeat.

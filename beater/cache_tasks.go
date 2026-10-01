@@ -1,12 +1,14 @@
 package beater
 
 import (
+	"slices"
+
 	"github.com/elastic/elastic-agent-libs/logp"
 	"github.com/thetherington/routelogbeat/beater/correlator"
 	"github.com/thetherington/routelogbeat/beater/magnumclient"
 )
 
-func (bt *routelogbeat) ProcessSlabTerminal(edges []magnumclient.Edge) error {
+func (bt *routelogbeat) ProcessSlabTerminal(edges []magnumclient.Edge, opts ...magnumclient.CallbackOptions) error {
 	logp.Debug("ProcessSlabTerminal", "Scanning %d events to update SlabMap Cache", len(edges))
 
 	for _, edge := range edges {
@@ -87,4 +89,74 @@ func SlabMapResolver(dstUUID string) ([]correlator.SlabRef, bool) {
 	}
 
 	return slabRefs, true
+}
+
+func (bt *routelogbeat) ProcessSubTerminal(edges []magnumclient.Edge, opts ...magnumclient.CallbackOptions) error {
+	logp.Debug("ProcessSubTerminal", "Scanning %d events to update DestinationMap/SourceMap Cache", len(edges))
+
+	var (
+		tag           string
+		isDestination bool
+		isSource      bool
+	)
+
+	if len(opts) > 0 {
+		if t, ok := opts[0]["tag"]; ok {
+			tag = t
+		}
+	}
+
+	// check if tag is in the configuration for either destinations or sources
+	if slices.Contains(bt.config.Destinations, tag) {
+		isDestination = true
+	} else if slices.Contains(bt.config.Sources, tag) {
+		isSource = true
+	}
+
+	for _, edge := range edges {
+		var terminal Terminal
+
+		terminal.Tag = tag
+		terminal.Id = edge.Id
+		terminal.Name = edge.Name
+		terminal.Label = findNamesetValueByName(bt.config.Mapping.Nameset, edge.NamesetNames, bt.config.Mapping.Default)
+
+		if isDestination {
+			DestinationMap.Set(terminal.Id, terminal)
+		} else if isSource {
+			SourceMap.Set(terminal.Id, terminal)
+		}
+	}
+
+	return nil
+}
+
+func TerminalMapResolver(uuid string, role correlator.Role) (map[string]any, bool) {
+	var terminal Terminal
+
+	switch role {
+	case correlator.RoleDst:
+		t, ok := DestinationMap.Get(uuid)
+		if !ok {
+			return nil, false
+		}
+		terminal = t
+
+	case correlator.RoleSrc:
+		t, ok := SourceMap.Get(uuid)
+		if !ok {
+			return nil, false
+		}
+		terminal = t
+
+	default:
+		return nil, false
+	}
+
+	return map[string]any{
+		"tag":   terminal.Tag,
+		"id":    terminal.Id,
+		"name":  terminal.Name,
+		"label": terminal.Label,
+	}, true
 }
