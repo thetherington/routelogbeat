@@ -30,6 +30,7 @@ routelogbeat:
     sweep_interval: 1s
     max_open: 4096
     pending_wait: 5s
+    require_dst_metadata: false
 processors:
   - add_cloud_metadata: ~
   - add_docker_metadata: ~

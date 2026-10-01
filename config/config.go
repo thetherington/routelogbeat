@@ -48,6 +48,10 @@ type Correlator struct {
 	// PendingWait is how long a slab/magrtrsrv log with no matching open
 	// envelope waits before it is dropped.
 	PendingWait time.Duration `config:"pending_wait"`
+	// RequireDstMetadata only correlates routes whose destination is in the
+	// destination metadata cache (the destination tags); routes to any other
+	// destination are discarded. Off by default.
+	RequireDstMetadata bool `config:"require_dst_metadata"`
 }
 
 type Config struct {

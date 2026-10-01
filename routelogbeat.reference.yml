@@ -67,6 +67,11 @@ routelogbeat:
     # How long a slab/magrtrsrv log whose destination isn't in the lookup map
     # yet waits for it to catch up before it is dropped.
     pending_wait: 5s
+
+    # Only correlate routes whose destination is in the destination metadata
+    # cache (built from the destination tags); routes to any other destination
+    # are discarded before an envelope is opened.
+    require_dst_metadata: false
 # ================================== General ===================================
 
 # The name of the shipper that publishes the network data. It can be used to group

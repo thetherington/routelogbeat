@@ -55,6 +55,13 @@ type Config struct {
 	PendingWait time.Duration
 	// InputBuffer is the Submit/TrySubmit channel's buffer depth.
 	InputBuffer int
+	// RequireDstMetadata, when true, only correlates routes whose destination
+	// the MetadataResolver knows: a scheduler/magnum record whose Key.Dst has
+	// no metadata is discarded instead of opening an envelope (counted in
+	// Stats.FilteredNoDstMetadata). This lets the upstream metadata cache act
+	// as the allowlist of destinations worth correlating. Requires
+	// WithMetadataResolver; New fails without one.
+	RequireDstMetadata bool
 }
 
 // DefaultConfig returns the package's default Config.
@@ -145,6 +152,11 @@ type Stats struct {
 	UnresolvedMulticastConflict int64
 	DroppedNoSlabMatch          int64
 	DroppedMulticastConflict    int64
+
+	// FilteredNoDstMetadata counts scheduler/magnum records discarded because
+	// Config.RequireDstMetadata is on and their destination had no metadata.
+	// Counted per record, so one filtered route can count several times.
+	FilteredNoDstMetadata int64
 }
 
 // pendingRecord is a slab/magrtrsrv Record buffered because no open envelope
@@ -206,6 +218,9 @@ func New(cfg Config, opts ...Option) (*Engine, error) {
 	}
 	for _, opt := range opts {
 		opt(e)
+	}
+	if cfg.RequireDstMetadata && e.meta == nil {
+		return nil, fmt.Errorf("correlator: RequireDstMetadata needs a MetadataResolver (WithMetadataResolver); without one every route would be discarded")
 	}
 
 	go e.run()
@@ -378,6 +393,9 @@ func (e *Engine) route(rec Record) {
 			return
 		}
 		env = e.openEnvelope(key, rec)
+		if env == nil {
+			return // filtered: destination has no metadata (RequireDstMetadata)
+		}
 		env.Partial = rec.Kind != e.cfg.OpenOn
 	} else if env.Partial && rec.Kind == e.cfg.OpenOn {
 		env.Partial = false
@@ -387,8 +405,21 @@ func (e *Engine) route(rec Record) {
 
 // openEnvelope creates a new envelope for key, superseding any other
 // currently-open envelope for the same destination, and registers its
-// resolver-derived slab list and metadata.
+// resolver-derived slab list and metadata. It returns nil, opening nothing,
+// when Config.RequireDstMetadata is on and the destination has no metadata.
 func (e *Engine) openEnvelope(key Key, rec Record) *Envelope {
+	// Destination metadata comes first, so a route filtered out for lacking it
+	// never evicts (MaxOpen) or supersedes an envelope that should stay open.
+	var dstMeta map[string]any
+	if e.meta != nil {
+		if m, ok := e.meta.Metadata(key.Dst, RoleDst); ok {
+			dstMeta = m
+		} else if e.cfg.RequireDstMetadata {
+			e.stats.filteredNoDstMetadata.Add(1)
+			return nil
+		}
+	}
+
 	if len(e.open) >= e.cfg.MaxOpen {
 		e.evictOldest()
 	}
@@ -410,12 +441,10 @@ func (e *Engine) openEnvelope(key Key, rec Record) *Envelope {
 	e.openByDst[key.Dst] = key
 	e.registerSlabs(key, env)
 
+	env.Resolved.DstMeta = dstMeta
 	if e.meta != nil {
 		if m, ok := e.meta.Metadata(key.Src, RoleSrc); ok {
 			env.Resolved.SrcMeta = m
-		}
-		if m, ok := e.meta.Metadata(key.Dst, RoleDst); ok {
-			env.Resolved.DstMeta = m
 		}
 	}
 
