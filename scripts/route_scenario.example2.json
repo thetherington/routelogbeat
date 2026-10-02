@@ -1,0 +1,14 @@
+{
+    "routes": [
+        {
+            "src": "83553388-ff05-5903-89fa-6b830a19db57",
+            "dst": "63fe05f6-197a-572f-b1f8-f5fe9ffce2b7",
+            "multicast": "239.131.1.52",
+            "slabs": [
+                { "name": "iad1bc-slab028", "output": 3 },
+                { "name": "iad1bc-slab047", "output": 3 }
+            ],
+            "start": 5
+        }
+    ]
+}

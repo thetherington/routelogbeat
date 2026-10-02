@@ -62,6 +62,18 @@ type Config struct {
 	// as the allowlist of destinations worth correlating. Requires
 	// WithMetadataResolver; New fails without one.
 	RequireDstMetadata bool
+	// CloseOnComplete, when true, closes an envelope early with ReasonComplete
+	// once every slab in its resolver slab list (Resolved.Slabs) has attached
+	// a slab log and CompleteGrace has passed since the last of them. An
+	// envelope that never gets a slab log from every listed slab still closes
+	// on CloseAfter, so CloseAfter remains the upper bound. Off by default.
+	CloseOnComplete bool
+	// CompleteGrace is how long a complete envelope stays open for late
+	// records (e.g. a magrtrsrv log arriving after its slab log) before it is
+	// closed. Checked on each sweep, so the effective wait rounds up to the
+	// next SweepInterval tick. Zero closes on the next sweep. Only used with
+	// CloseOnComplete.
+	CompleteGrace time.Duration
 }
 
 // DefaultConfig returns the package's default Config.
@@ -73,6 +85,7 @@ func DefaultConfig() Config {
 		MaxOpen:       4096,
 		PendingWait:   5 * time.Second,
 		InputBuffer:   1024,
+		CompleteGrace: 2 * time.Second,
 	}
 }
 
@@ -94,6 +107,9 @@ func applyDefaults(cfg Config) Config {
 	}
 	if cfg.PendingWait < 0 {
 		cfg.PendingWait = 0
+	}
+	if cfg.CompleteGrace < 0 {
+		cfg.CompleteGrace = 0
 	}
 	if cfg.InputBuffer <= 0 {
 		cfg.InputBuffer = def.InputBuffer
@@ -157,6 +173,10 @@ type Stats struct {
 	// Config.RequireDstMetadata is on and their destination had no metadata.
 	// Counted per record, so one filtered route can count several times.
 	FilteredNoDstMetadata int64
+
+	// ClosedComplete counts envelopes closed early with ReasonComplete
+	// (Config.CloseOnComplete); they are also in EnvelopesClosed.
+	ClosedComplete int64
 }
 
 // pendingRecord is a slab/magrtrsrv Record buffered because no open envelope
@@ -190,6 +210,10 @@ type Engine struct {
 	slabIndex map[SlabRef]Key   // {hostname,DstNum} -> Key, for every currently-open envelope
 	envSlabs  map[Key][]SlabRef // the SlabRefs registered for each open envelope
 	pending   []pendingRecord
+	// completeAt holds, for each open envelope that has a slab log from every
+	// slab in its slab list, the clock time it became complete. Only
+	// populated with Config.CloseOnComplete.
+	completeAt map[Key]time.Time
 }
 
 // New constructs and starts a correlation Engine. The returned Engine owns a
@@ -204,17 +228,18 @@ func New(cfg Config, opts ...Option) (*Engine, error) {
 	}
 
 	e := &Engine{
-		cfg:       cfg,
-		parsers:   DefaultParsers(),
-		resolver:  nopResolver{},
-		clock:     RealClock{},
-		in:        make(chan RawLog, cfg.InputBuffer),
-		out:       make(chan *Envelope),
-		closed:    make(chan struct{}),
-		open:      make(map[Key]*Envelope),
-		openByDst: make(map[string]Key),
-		slabIndex: make(map[SlabRef]Key),
-		envSlabs:  make(map[Key][]SlabRef),
+		cfg:        cfg,
+		parsers:    DefaultParsers(),
+		resolver:   nopResolver{},
+		clock:      RealClock{},
+		in:         make(chan RawLog, cfg.InputBuffer),
+		out:        make(chan *Envelope),
+		closed:     make(chan struct{}),
+		open:       make(map[Key]*Envelope),
+		openByDst:  make(map[string]Key),
+		slabIndex:  make(map[SlabRef]Key),
+		envSlabs:   make(map[Key][]SlabRef),
+		completeAt: make(map[Key]time.Time),
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -503,9 +528,37 @@ func (e *Engine) attach(env *Envelope, rec Record) {
 			env.Resolved.Multicast = rec.Slab.Multicast
 		}
 	}
+	if e.cfg.CloseOnComplete && rec.Kind == KindSlab {
+		e.markIfComplete(env)
+	}
 }
 
-// sweep closes expired envelopes, retries resolver lookups for envelopes
+// markIfComplete records when env became complete: every SlabRef in its slab
+// list has at least one attached slab record. Records the first time only;
+// sweep closes the envelope once CompleteGrace has passed since then.
+func (e *Engine) markIfComplete(env *Envelope) {
+	if _, done := e.completeAt[env.Key]; done {
+		return
+	}
+	slabs := e.envSlabs[env.Key]
+	if len(slabs) == 0 {
+		return // slab records can't attach without a slab list; defensive
+	}
+	seen := make(map[SlabRef]bool, len(slabs))
+	for _, r := range env.Records {
+		if r.Kind == KindSlab {
+			seen[SlabRef{Hostname: r.Slab.Hostname, DstNum: r.Slab.DstNum}] = true
+		}
+	}
+	for _, ref := range slabs {
+		if !seen[ref] {
+			return
+		}
+	}
+	e.completeAt[env.Key] = e.clock.Now()
+}
+
+// sweep closes expired and (with CloseOnComplete) complete envelopes, retries resolver lookups for envelopes
 // still lacking a slab list, and retries (or expires) buffered
 // slab/magrtrsrv records.
 func (e *Engine) sweep(now time.Time) {
@@ -514,6 +567,11 @@ func (e *Engine) sweep(now time.Time) {
 	for key, env := range e.open {
 		if now.Sub(env.OpenedAt) >= e.cfg.CloseAfter {
 			e.emit(key, env, ReasonCloseAfter)
+			continue
+		}
+		if at, ok := e.completeAt[key]; ok && now.Sub(at) >= e.cfg.CompleteGrace {
+			e.stats.closedComplete.Add(1)
+			e.emit(key, env, ReasonComplete)
 			continue
 		}
 		if len(e.envSlabs[key]) == 0 {
@@ -606,6 +664,7 @@ func (e *Engine) emit(key Key, env *Envelope, reason CloseReason) {
 		}
 	}
 	delete(e.envSlabs, key)
+	delete(e.completeAt, key)
 
 	env.Reason = reason
 	e.stats.envelopesClosed.Add(1)

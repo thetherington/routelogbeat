@@ -23,6 +23,7 @@ type statsCounters struct {
 	droppedMulticastConflict    atomic.Int64
 
 	filteredNoDstMetadata atomic.Int64
+	closedComplete        atomic.Int64
 }
 
 // countUnresolved records a slab/magrtrsrv record's first miss, in the total
@@ -68,5 +69,6 @@ func (s *statsCounters) snapshot() Stats {
 		DroppedMulticastConflict:    s.droppedMulticastConflict.Load(),
 
 		FilteredNoDstMetadata: s.filteredNoDstMetadata.Load(),
+		ClosedComplete:        s.closedComplete.Load(),
 	}
 }

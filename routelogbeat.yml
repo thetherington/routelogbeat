@@ -72,6 +72,15 @@ routelogbeat:
     # cache (built from the destination tags); routes to any other destination
     # are discarded before an envelope is opened.
     require_dst_metadata: true
+
+    # Close an envelope early, with reason "complete", once every slab in the
+    # destination's slab list has logged, instead of always waiting for
+    # close_after. close_after still closes routes where a slab never logs.
+    close_on_complete: true
+
+    # With close_on_complete, how long a complete envelope stays open for
+    # late logs (e.g. a magrtrsrv log after its slab log) before it closes.
+    complete_grace: 2s
 # ================================== General ===================================
 
 # The name of the shipper that publishes the network data. It can be used to group

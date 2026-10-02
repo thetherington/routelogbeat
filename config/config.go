@@ -52,6 +52,13 @@ type Correlator struct {
 	// destination metadata cache (the destination tags); routes to any other
 	// destination are discarded. Off by default.
 	RequireDstMetadata bool `config:"require_dst_metadata"`
+	// CloseOnComplete closes an envelope early once every slab in its
+	// destination's slab list has logged, after CompleteGrace. close_after
+	// stays the upper bound. Off by default.
+	CloseOnComplete bool `config:"close_on_complete"`
+	// CompleteGrace is how long a complete envelope waits for late logs
+	// before it is closed. Only used with CloseOnComplete.
+	CompleteGrace time.Duration `config:"complete_grace"`
 }
 
 type Config struct {
@@ -93,5 +100,6 @@ var DefaultConfig = Config{
 		SweepInterval: 1 * time.Second,
 		MaxOpen:       4096,
 		PendingWait:   5 * time.Second,
+		CompleteGrace: 2 * time.Second,
 	},
 }

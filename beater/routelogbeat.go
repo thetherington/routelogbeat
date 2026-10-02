@@ -104,6 +104,8 @@ func New(b *beat.Beat, cfg *config.C) (beat.Beater, error) {
 		MaxOpen:            c.Correlator.MaxOpen,
 		PendingWait:        c.Correlator.PendingWait,
 		RequireDstMetadata: c.Correlator.RequireDstMetadata,
+		CloseOnComplete:    c.Correlator.CloseOnComplete,
+		CompleteGrace:      c.Correlator.CompleteGrace,
 	}, correlatorOptions(resolver, metadata)...)
 	if err != nil {
 		return nil, fmt.Errorf("correlator: %w", err)
@@ -255,9 +257,10 @@ func (bt *routelogbeat) logStats() {
 	s := bt.engine.Stats()
 	logp.Info("correlator: submitted=%d discarded=%d parse_errors=%d unresolved_slab=%d "+
 		"(no_slab_match=%d multicast_conflict=%d) pending_dropped=%d "+
-		"(no_slab_match=%d multicast_conflict=%d) filtered_no_dst_metadata=%d envelopes_opened=%d envelopes_closed=%d open=%d max_open_evictions=%d",
+		"(no_slab_match=%d multicast_conflict=%d) filtered_no_dst_metadata=%d envelopes_opened=%d envelopes_closed=%d "+
+		"(complete=%d) open=%d max_open_evictions=%d",
 		s.Submitted, s.Discarded, s.ParseErrors, s.UnresolvedSlab,
 		s.UnresolvedNoSlabMatch, s.UnresolvedMulticastConflict, s.PendingDropped,
 		s.DroppedNoSlabMatch, s.DroppedMulticastConflict, s.FilteredNoDstMetadata, s.EnvelopesOpened, s.EnvelopesClosed,
-		s.EnvelopesOpened-s.EnvelopesClosed, s.MaxOpenEvictions)
+		s.ClosedComplete, s.EnvelopesOpened-s.EnvelopesClosed, s.MaxOpenEvictions)
 }

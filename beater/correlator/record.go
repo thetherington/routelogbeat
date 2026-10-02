@@ -116,6 +116,7 @@ const (
 	ReasonSuperseded CloseReason = "superseded"  // a newer route to the same Dst (different Src) opened
 	ReasonMaxOpen    CloseReason = "max_open"    // evicted to make room under MaxOpen
 	ReasonShutdown   CloseReason = "shutdown"    // engine Close()d with this envelope still open
+	ReasonComplete   CloseReason = "complete"    // every listed slab logged (CloseOnComplete), after CompleteGrace
 )
 
 // ResolvedAttrs is envelope-side enrichment assembled from the two
