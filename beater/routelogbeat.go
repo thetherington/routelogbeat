@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/elastic/beats/v7/libbeat/beat"
@@ -207,11 +209,20 @@ func (bt *routelogbeat) logEnvelope(env *correlator.Envelope) {
 		schedToSlab = fmt.Sprintf("%dms", ms)
 	}
 
+	// The magclientsrv client address, when a magclientsrv log was correlated.
+	client := "n/a"
+	if env.Resolved.ClientIP != "" {
+		client = env.Resolved.ClientIP
+		if env.Resolved.ClientPort != 0 {
+			client = net.JoinHostPort(env.Resolved.ClientIP, strconv.Itoa(env.Resolved.ClientPort))
+		}
+	}
+
 	// Log the basic information about the closed envelope.
 	logp.Info("routelogbeat: envelope closed src=%s dst=%s opened_by=%s partial=%t "+
-		"logs=%d sources=%v duration=%s scheduler_to_slab=%s reason=%s",
+		"logs=%d sources=%v duration=%s scheduler_to_slab=%s client=%s reason=%s",
 		env.Key.Src, env.Key.Dst, env.OpenedBy.Family(), env.Partial,
-		len(env.Records), env.SourceCounts(), env.Duration(), schedToSlab, env.Reason)
+		len(env.Records), env.SourceCounts(), env.Duration(), schedToSlab, client, env.Reason)
 
 	// print the env.Records
 	// for _, record := range env.Records {

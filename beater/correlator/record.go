@@ -12,12 +12,13 @@ const (
 	KindMagnumSubscribe // magnum "Subscribe request."
 	KindMagnumComplete  // magnum "Subscription Request Complete:"
 	KindSlab
-	KindMagrtrsrv // magrtrsrv "set.rx.route" command
+	KindMagrtrsrv    // magrtrsrv "set.rx.route" command
+	KindMagclientsrv // magclientsrv "Received Dispatch Request." with Method [route]
 )
 
 // String returns the fine-grained name used by ParseKind and the
 // correlator.open_on config value: "scheduler", "magnum_subscribe",
-// "magnum_complete", "slab", or "magrtrsrv".
+// "magnum_complete", "slab", "magrtrsrv", or "magclientsrv".
 func (k Kind) String() string {
 	switch k {
 	case KindScheduler:
@@ -30,13 +31,15 @@ func (k Kind) String() string {
 		return "slab"
 	case KindMagrtrsrv:
 		return "magrtrsrv"
+	case KindMagclientsrv:
+		return "magclientsrv"
 	default:
 		return "unknown"
 	}
 }
 
 // Family returns the coarse parser label shared by all variants of a format:
-// "scheduler", "magnum", "slab", or "magrtrsrv".
+// "scheduler", "magnum", "slab", "magrtrsrv", or "magclientsrv".
 func (k Kind) Family() string {
 	switch k {
 	case KindScheduler:
@@ -47,6 +50,8 @@ func (k Kind) Family() string {
 		return "slab"
 	case KindMagrtrsrv:
 		return "magrtrsrv"
+	case KindMagclientsrv:
+		return "magclientsrv"
 	default:
 		return "unknown"
 	}
@@ -66,6 +71,8 @@ func ParseKind(s string) (Kind, bool) {
 		return KindSlab, true
 	case "magrtrsrv":
 		return KindMagrtrsrv, true
+	case "magclientsrv":
+		return KindMagclientsrv, true
 	default:
 		return KindUnknown, false
 	}
@@ -128,13 +135,19 @@ type ResolvedAttrs struct {
 	Multicast string         // learned from records as they attach; magrtrsrv always wins
 	SrcMeta   map[string]any // MetadataResolver.Metadata(Key.Src, RoleSrc), if configured
 	DstMeta   map[string]any // MetadataResolver.Metadata(Key.Dst, RoleDst), if configured
+
+	// ClientIP/ClientPort are the "Client [ip:port]" of the first magclientsrv
+	// record to attach; empty/zero if none did (it is optional). ClientPort is
+	// zero when the client value had no port.
+	ClientIP   string
+	ClientPort int
 }
 
 // Envelope groups every log correlated to one route change.
 type Envelope struct {
 	Key          Key
 	OpenedBy     Kind      // the Kind of the record that opened it
-	Partial      bool      // opened by a non-open_on record; the true opener never arrived (yet)
+	Partial      bool      // opened by a record other than open_on or magclientsrv, and neither has arrived (yet)
 	OpenedAt     time.Time // timestamp of the earliest correlated log
 	LastAt       time.Time // timestamp of the latest correlated log
 	Records      []Record  // every correlated log, in arrival order

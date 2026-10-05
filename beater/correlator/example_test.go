@@ -218,4 +218,45 @@ func TestEndToEnd_UserSnippet(t *testing.T) {
 		_, ok := env.SchedulerToSlabMillis()
 		require.False(t, ok)
 	})
+
+	// magclientsrvLog arrives just after the scheduler and before magnum.
+	magclientsrvLog := func(t *testing.T) RawLog {
+		return RawLog{
+			Line: `INFO:interfaces.server:Received Dispatch Request. Client [10.103.40.46:45662], Message ID [44208], Method [route], Parameters [[[{'src': ['` + src + `'], 'dst': ['` + dst + `']}]]].`,
+			Time: parseTime(t, "2026-08-23T04:00:00.069Z"),
+		}
+	}
+
+	t.Run("with magclientsrv: it joins the envelope and its client is kept", func(t *testing.T) {
+		eng := newEngine(t)
+		logs := append([]RawLog{schedulerLog(t), magclientsrvLog(t)}, magnumLogs(t)...)
+		logs = append(logs, slabLogs(t, "239.32.111.55")...)
+
+		env := submitAndReceive(t, eng, logs)
+		assertCommon(t, env)
+
+		require.Equal(t, map[string]int{"scheduler": 1, "magclientsrv": 1, "magnum": 2, "slab": 2}, env.SourceCounts())
+		require.Equal(t, "10.103.40.46", env.Resolved.ClientIP)
+		require.Equal(t, 45662, env.Resolved.ClientPort)
+
+		ms, ok := env.SchedulerToSlabMillis()
+		require.True(t, ok)
+		require.EqualValues(t, 12_588, ms) // still measured from the scheduler log
+	})
+
+	t.Run("magclientsrv without scheduler: it opens a non-partial envelope", func(t *testing.T) {
+		eng := newEngine(t)
+		logs := append([]RawLog{magclientsrvLog(t)}, magnumLogs(t)...)
+		logs = append(logs, slabLogs(t, "239.32.111.55")...)
+
+		env := submitAndReceive(t, eng, logs)
+
+		require.Equal(t, Key{Src: src, Dst: dst}, env.Key)
+		require.Equal(t, KindMagclientsrv, env.OpenedBy)
+		require.False(t, env.Partial)
+		require.Equal(t, "10.103.40.46", env.Resolved.ClientIP)
+
+		_, ok := env.SchedulerToSlabMillis()
+		require.False(t, ok) // no scheduler record
+	})
 }

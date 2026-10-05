@@ -5,6 +5,7 @@ Generates the log lines the routelogbeat correlator correlates for one route
 change, in the order and with the delays seen on a real system:
 
     t=0.000s   scheduler   main: Sending route: [[{'src': [...], 'dst': [...]}]]
+    t=0.004s   magclientsrv INFO:interfaces.server:Received Dispatch Request. Client [ip:port], ... Method [route] ...
     t=2.441s   magnum      INFO:jsonrpc:Subscribe request. ...
     t=2.444s   magnum      INFO:subscription:Subscription Request Complete: ...
     t=12.535s  magrtrsrv   INFO:commands:Cmd. ... M [set.rx.route] ... multicast_ip ...
@@ -36,6 +37,9 @@ Examples:
     # Five routes, a new one every 3s (they overlap), 2x slower, +/-10% jitter
     ./route_syslog_sim.py --target 10.9.0.69 --count 5 --interval 3 --scale 2 --jitter 0.1
 
+    # No scheduler log, magclientsrv opens the envelope instead (not partial)
+    ./route_syslog_sim.py --target 10.9.0.69 --scheduler none --client-ip 10.103.40.46
+
     # Make the slab ADDR disagree with magrtrsrv (tests multicast_conflict)
     ./route_syslog_sim.py --target 10.9.0.69 --slab-multicast 239.1.1.1
 
@@ -61,6 +65,7 @@ from datetime import datetime, timedelta, timezone
 # sample in beater/correlator/example_test.go.
 DEFAULT_TIMING = {
     "scheduler": 0.0,
+    "magclientsrv": 0.004,
     "subscribe": 2.441,
     "complete": 2.444,
     "magrtrsrv": 12.535,
@@ -89,6 +94,8 @@ class Route:
     multicast: str
     slab_multicast: str | None = None  # None: same as multicast
     start: float = 0.0                   # offset of this route's first log
+    client_ip: str = "10.103.40.46"      # magclientsrv "Client [ip:port]"
+    client_port: int = 45662
 
 
 @dataclass(order=True)
@@ -111,6 +118,13 @@ def scheduler_body(r: Route, variant: str) -> str:
     if variant == "v2":
         return f"dcpipes.jsonrpctcp: SENDING: {{'params': [[{obj}]], 'method': 'route'}}"
     return f"main: Sending route: [[{obj}]]"
+
+
+def magclientsrv_body(r: Route) -> str:
+    client = f"[{r.client_ip}]:{r.client_port}" if ":" in r.client_ip else f"{r.client_ip}:{r.client_port}"
+    return (f"INFO:interfaces.server:Received Dispatch Request. Client [{client}], "
+            f"Message ID [{random.randint(1, 99999)}], Method [route], "
+            f"Parameters [[[{{'src': ['{r.src}'], 'dst': ['{r.dst}']}}]]].")
 
 
 def subscribe_body(r: Route, shape: str) -> str:
@@ -225,6 +239,9 @@ def build_messages(routes: list[Route], a: argparse.Namespace) -> list[Message]:
         if a.scheduler != "none":
             add(i, base, timing["scheduler"], "scheduler", a.scheduler_host, a.scheduler_tag,
                 scheduler_body(r, a.scheduler))
+        if not a.no_magclientsrv:
+            add(i, base, timing["magclientsrv"], "magclientsrv", a.magclientsrv_host, a.magclientsrv_tag,
+                magclientsrv_body(r))
         if a.subscribe != "none":
             add(i, base, timing["subscribe"], "magnum", a.magnum_host, a.magnum_tag,
                 subscribe_body(r, a.subscribe))
@@ -258,6 +275,8 @@ def routes_from_args(a: argparse.Namespace) -> list[Route]:
             multicast=a.multicast,
             slab_multicast=a.slab_multicast,
             start=n * a.interval,
+            client_ip=a.client_ip,
+            client_port=a.client_port,
         ))
     return routes
 
@@ -269,7 +288,8 @@ def routes_from_scenario(path: str, a: argparse.Namespace) -> list[Route]:
       "routes": [
         {"src": "...", "dst": "...", "multicast": "239.32.111.55",
          "slabs": [{"name": "sv7bc-slab027", "output": 4}, "sv7bc-slab058:4"],
-         "slab_multicast": "239.1.1.1", "start": 0}
+         "slab_multicast": "239.1.1.1", "start": 0,
+         "client_ip": "10.103.40.46", "client_port": 45662}
       ]
     }
     """
@@ -288,6 +308,8 @@ def routes_from_scenario(path: str, a: argparse.Namespace) -> list[Route]:
             multicast=e.get("multicast", a.multicast),
             slab_multicast=e.get("slab_multicast", a.slab_multicast),
             start=float(e.get("start", n * a.interval)),
+            client_ip=e.get("client_ip", a.client_ip),
+            client_port=int(e.get("client_port", a.client_port)),
         ))
     return routes
 
@@ -322,11 +344,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                    help="ADDR to put in the slab lines instead of --multicast (tests multicast_conflict)")
     g.add_argument("--udp-port", type=int, default=5004, help="magrtrsrv udp_port (default 5004)")
     g.add_argument("--source-ip", default="10.12.42.89", help="magrtrsrv source_ips entry")
+    g.add_argument("--client-ip", default="10.103.40.46", help="magclientsrv client IP (default 10.103.40.46)")
+    g.add_argument("--client-port", type=int, default=45662, help="magclientsrv client port (default 45662)")
     g.add_argument("--scenario", metavar="FILE", help="JSON file with a list of routes (see source)")
 
     g = p.add_argument_group("which logs")
     g.add_argument("--scheduler", choices=["v1", "v2", "none"], default="v1",
-                   help="scheduler line format, or none to test a partial envelope")
+                   help="scheduler line format, or none (magclientsrv, or magnum if that is off too, opens the envelope)")
+    g.add_argument("--no-magclientsrv", action="store_true",
+                   help="omit the magclientsrv Received Dispatch Request line (it is optional on real systems)")
     g.add_argument("--subscribe", choices=["dst_sub", "subscription", "none"], default="dst_sub",
                    help="magnum Subscribe request shape")
     g.add_argument("--no-complete", action="store_true", help="omit the Subscription Request Complete line")
@@ -338,6 +364,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     g = p.add_argument_group("syslog hostnames and process names")
     g.add_argument("--scheduler-host", default="scheduler")
     g.add_argument("--scheduler-tag", default="route-scheduler", help="process name (default route-scheduler)")
+    g.add_argument("--magclientsrv-host", default="magnum")
+    g.add_argument("--magclientsrv-tag", default="magclientsrv", help="process name (default magclientsrv)")
     g.add_argument("--magnum-host", default="magnum")
     g.add_argument("--magnum-tag", default="magnum-api", help="process name (default magnum-api)")
     g.add_argument("--magrtrsrv-host", default="magnum")
@@ -375,7 +403,8 @@ def main(argv: list[str]) -> int:
     for i, r in enumerate(routes, 1):
         slabs = ", ".join(f"{s.name}:{s.output}" for s in r.slabs)
         extra = f" slab_multicast={r.slab_multicast}" if r.slab_multicast else ""
-        print(f"route {i}: src={r.src} dst={r.dst} multicast={r.multicast}{extra} slabs=[{slabs}]")
+        print(f"route {i}: src={r.src} dst={r.dst} multicast={r.multicast}{extra} slabs=[{slabs}] "
+              f"client={r.client_ip}:{r.client_port}")
     print(f"{len(msgs)} messages over {msgs[-1].offset:.3f}s -> "
           f"{'(dry run)' if a.dry_run else f'{a.proto}://{a.target}:{a.port}'} ({a.format})\n")
 
@@ -401,7 +430,7 @@ def main(argv: list[str]) -> int:
             line = frame(m, body, at, a.format, pri)
             if sender:
                 sender.send(line)
-            print(f"+{m.offset:7.3f}s  route {m.route_no}  {m.kind:<9}  {line}")
+            print(f"+{m.offset:7.3f}s  route {m.route_no}  {m.kind:<12}  {line}")
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
         return 130

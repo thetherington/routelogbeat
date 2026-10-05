@@ -51,7 +51,8 @@ routelogbeat:
   # Correlation engine: groups related route log lines into timed event envelopes.
   correlator:
     # Which log kind opens a new envelope:
-    #   "scheduler" | "magnum_subscribe" | "magnum_complete"
+    #   "scheduler" | "magnum_subscribe" | "magnum_complete" | "magclientsrv"
+    # (a magclientsrv log always opens a non-partial envelope, whatever this is)
     open_on: "scheduler"
 
     # How long after the opening log an envelope stays open before it is

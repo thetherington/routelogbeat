@@ -14,7 +14,7 @@ var ErrNoMatch = errors.New("correlator: line did not match this parser")
 // Parser recognizes one log format and turns a matching line into Records.
 type Parser interface {
 	// Name is the coarse label stamped onto every Record this parser
-	// returns: "scheduler" | "magnum" | "slab" | "magrtrsrv".
+	// returns: "scheduler" | "magnum" | "slab" | "magrtrsrv" | "magclientsrv".
 	Name() string
 	// Kind is this parser's dominant Kind. magnum refines it per-variant
 	// inside Parse.
@@ -27,11 +27,12 @@ type Parser interface {
 }
 
 // DefaultParsers returns the built-in parsers in the order ingest() tries
-// them. The four formats are disjoint, so order is not correctness-critical,
+// them. The five formats are disjoint, so order is not correctness-critical,
 // only a minor perf choice (put the hottest formats first).
 func DefaultParsers() []Parser {
 	return []Parser{
 		schedulerParser{},
+		magclientsrvParser{},
 		magnumParser{},
 		slabParser{},
 		magrtrsrvParser{},

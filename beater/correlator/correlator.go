@@ -1,5 +1,5 @@
 // Package correlator groups related route-provisioning log lines —
-// scheduler, magnum, slab, and magrtrsrv, arriving in different text
+// scheduler, magclientsrv, magnum, slab, and magrtrsrv, arriving in different text
 // formats — into a single timed Envelope per route change, so a caller can
 // measure how long the change took.
 //
@@ -17,7 +17,7 @@
 //	    now := <-ticker -> sweep(now): close expired envelopes, retry
 //	                       unresolved slab/magrtrsrv records and resolver lookups
 //
-// scheduler and magnum lines carry the (src, dst) Key directly. slab and
+// scheduler, magclientsrv and magnum lines carry the (src, dst) Key directly. slab and
 // magrtrsrv lines carry only a hostname and a "DST n" number; resolving them
 // requires an already-open envelope for their destination (via the injected
 // Resolver's Lookup(dstUUID) — see resolver.go) — they can never open an
@@ -37,8 +37,10 @@ import (
 // Config configures a correlation Engine.
 type Config struct {
 	// OpenOn is the Kind that opens a new envelope in the normal case. Must
-	// be KindScheduler, KindMagnumSubscribe, or KindMagnumComplete — slab
-	// and magrtrsrv are member-only kinds and can never open an envelope.
+	// be KindScheduler, KindMagnumSubscribe, KindMagnumComplete, or
+	// KindMagclientsrv — slab and magrtrsrv are member-only kinds and can
+	// never open an envelope. Whatever OpenOn is, a magclientsrv record also
+	// counts as a full opener (see fullOpener).
 	OpenOn Kind
 	// CloseAfter is an envelope's fixed lifetime from OpenedAt; the primary
 	// close trigger, alongside supersession, MaxOpen eviction, and shutdown.
@@ -222,9 +224,9 @@ type Engine struct {
 func New(cfg Config, opts ...Option) (*Engine, error) {
 	cfg = applyDefaults(cfg)
 	switch cfg.OpenOn {
-	case KindScheduler, KindMagnumSubscribe, KindMagnumComplete:
+	case KindScheduler, KindMagnumSubscribe, KindMagnumComplete, KindMagclientsrv:
 	default:
-		return nil, fmt.Errorf("correlator: OpenOn must be scheduler, magnum_subscribe, or magnum_complete, got %v", cfg.OpenOn)
+		return nil, fmt.Errorf("correlator: OpenOn must be scheduler, magnum_subscribe, magnum_complete, or magclientsrv, got %v", cfg.OpenOn)
 	}
 
 	e := &Engine{
@@ -421,11 +423,18 @@ func (e *Engine) route(rec Record) {
 		if env == nil {
 			return // filtered: destination has no metadata (RequireDstMetadata)
 		}
-		env.Partial = rec.Kind != e.cfg.OpenOn
-	} else if env.Partial && rec.Kind == e.cfg.OpenOn {
+		env.Partial = !e.fullOpener(rec.Kind)
+	} else if env.Partial && e.fullOpener(rec.Kind) {
 		env.Partial = false
 	}
 	e.attach(env, rec)
+}
+
+// fullOpener reports whether k opens a non-partial envelope: the configured
+// OpenOn kind, or magclientsrv, which is optional but, when present, is as
+// good an opener as the scheduler (confirmed with the user).
+func (e *Engine) fullOpener(k Kind) bool {
+	return k == e.cfg.OpenOn || k == KindMagclientsrv
 }
 
 // openEnvelope creates a new envelope for key, superseding any other
@@ -526,6 +535,13 @@ func (e *Engine) attach(env *Envelope, rec Record) {
 	if rec.Slab != nil && rec.Slab.Multicast != "" {
 		if rec.Kind == KindMagrtrsrv || env.Resolved.Multicast == "" {
 			env.Resolved.Multicast = rec.Slab.Multicast
+		}
+	}
+	if rec.Kind == KindMagclientsrv && env.Resolved.ClientIP == "" {
+		// First magclientsrv record wins; a later one doesn't overwrite it.
+		if ip, ok := rec.Fields["client_ip"].(string); ok {
+			env.Resolved.ClientIP = ip
+			env.Resolved.ClientPort, _ = rec.Fields["client_port"].(int)
 		}
 	}
 	if e.cfg.CloseOnComplete && rec.Kind == KindSlab {

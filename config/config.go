@@ -37,7 +37,8 @@ type Mapping struct {
 // route log lines into timed event envelopes.
 type Correlator struct {
 	// OpenOn is the log kind that opens a new envelope: "scheduler",
-	// "magnum_subscribe", or "magnum_complete".
+	// "magnum_subscribe", "magnum_complete", or "magclientsrv". A magclientsrv
+	// log always opens a non-partial envelope, whatever this is set to.
 	OpenOn string `config:"open_on"`
 	// CloseAfter is an envelope's fixed lifetime from its opening log.
 	CloseAfter time.Duration `config:"close_after"`
