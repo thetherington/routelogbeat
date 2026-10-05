@@ -6,9 +6,11 @@ import (
 	"github.com/elastic/elastic-agent-libs/logp"
 	"github.com/thetherington/routelogbeat/beater/correlator"
 	"github.com/thetherington/routelogbeat/beater/magnumclient"
+	phyTerminals "github.com/thetherington/routelogbeat/beater/magnumclient/queryPhysicalTerminals"
+	subTerminals "github.com/thetherington/routelogbeat/beater/magnumclient/querySubcriptionTerminals"
 )
 
-func (bt *routelogbeat) ProcessSlabTerminal(edges []magnumclient.Edge, opts ...magnumclient.CallbackOptions) error {
+func (bt *routelogbeat) ProcessSlabTerminal(edges []phyTerminals.Edge, opts ...magnumclient.CallbackOptions) error {
 	logp.Debug("ProcessSlabTerminal", "Scanning %d events to update SlabMap Cache", len(edges))
 
 	for _, edge := range edges {
@@ -32,7 +34,7 @@ func (bt *routelogbeat) ProcessSlabTerminal(edges []magnumclient.Edge, opts ...m
 		if edge.Port != nil {
 			deviceName = edge.Port.Device.Name
 
-			outputInt, err := ExtractOutputFromPort(edge.Port.Id)
+			outputInt, err := edge.Port.ExtractOutputFromPort()
 			if err != nil {
 				logp.Err("failed to extract output from port Id: %s, error: %v", edge.Port.Id, err)
 				continue
@@ -91,7 +93,7 @@ func SlabMapResolver(dstUUID string) ([]correlator.SlabRef, bool) {
 	return slabRefs, true
 }
 
-func (bt *routelogbeat) ProcessSubTerminal(edges []magnumclient.Edge, opts ...magnumclient.CallbackOptions) error {
+func (bt *routelogbeat) ProcessSubTerminal(edges []subTerminals.Edge, opts ...magnumclient.CallbackOptions) error {
 	logp.Debug("ProcessSubTerminal", "Scanning %d events to update DestinationMap/SourceMap Cache", len(edges))
 
 	var (
@@ -119,7 +121,7 @@ func (bt *routelogbeat) ProcessSubTerminal(edges []magnumclient.Edge, opts ...ma
 		terminal.Tag = tag
 		terminal.Id = edge.Id
 		terminal.Name = edge.Name
-		terminal.Label = findNamesetValueByName(bt.config.Mapping.Nameset, edge.NamesetNames, bt.config.Mapping.Default)
+		terminal.Label = edge.FindNamesetValueByName(bt.config.Mapping.Nameset, bt.config.Mapping.Default)
 
 		if isDestination {
 			DestinationMap.Set(terminal.Id, terminal)

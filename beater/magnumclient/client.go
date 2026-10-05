@@ -5,6 +5,9 @@ import (
 
 	"github.com/elastic/elastic-agent-libs/logp"
 	"github.com/hasura/go-graphql-client"
+
+	phyTerminals "github.com/thetherington/routelogbeat/beater/magnumclient/queryPhysicalTerminals"
+	subTerminals "github.com/thetherington/routelogbeat/beater/magnumclient/querySubcriptionTerminals"
 )
 
 type CallbackOptions map[string]string
@@ -17,6 +20,8 @@ type Client interface {
 	Close()
 	RunSubscriptions(done chan struct{})
 	QueryTerminals(tag string, limit int, isSub bool, fn func(terminals []Edge, opts ...CallbackOptions) error) error
+	QuerySubscriptionTerminals(tag string, limit int, fn func(terminals []subTerminals.Edge, opts ...CallbackOptions) error) error
+	QueryPhysicalTerminals(tag string, limit int, fn func(terminals []phyTerminals.Edge, opts ...CallbackOptions) error) error
 }
 
 type magnumClient struct {

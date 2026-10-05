@@ -140,14 +140,14 @@ func (bt *routelogbeat) Run(b *beat.Beat) error {
 	}
 
 	// Query the terminals with PhysicalRouteTags from the magnum client before entering the main loop.
-	err = bt.magnumClient.QueryTerminals(bt.config.PhysicalRouteTags[0], bt.config.API.Limit, false, bt.ProcessSlabTerminal)
+	err = bt.magnumClient.QueryPhysicalTerminals(bt.config.PhysicalRouteTags[0], bt.config.API.Limit, bt.ProcessSlabTerminal)
 	if err != nil {
 		return err
 	}
 
 	// Query the terminals for Destinations tags
 	for _, tag := range bt.config.Destinations {
-		err = bt.magnumClient.QueryTerminals(tag, bt.config.API.Limit, true, bt.ProcessSubTerminal)
+		err = bt.magnumClient.QuerySubscriptionTerminals(tag, bt.config.API.Limit, bt.ProcessSubTerminal)
 		if err != nil {
 			return err
 		}
@@ -155,7 +155,7 @@ func (bt *routelogbeat) Run(b *beat.Beat) error {
 
 	// Query the terminals for Sources tags
 	for _, tag := range bt.config.Sources {
-		err = bt.magnumClient.QueryTerminals(tag, bt.config.API.Limit, true, bt.ProcessSubTerminal)
+		err = bt.magnumClient.QuerySubscriptionTerminals(tag, bt.config.API.Limit, bt.ProcessSubTerminal)
 		if err != nil {
 			return err
 		}
