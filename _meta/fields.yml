@@ -1,9 +1,104 @@
 - key: routelogbeat
   title: routelogbeat
-  description:
+  description: >
+    One document per correlated route change: the logs of every service that
+    took part, the route's source and destination, and how long it took.
   fields:
-    - name: counter
-      type: long
+    - name: destinationId
+      type: keyword
       required: true
       description: >
-        PLEASE UPDATE DOCUMENTATION
+        Destination UUID of the route.
+    - name: destinationName
+      type: keyword
+      description: >
+        Destination name from Magnum. Missing if the destination is not in the
+        destination cache.
+    - name: destinationLabel
+      type: keyword
+      description: >
+        Destination nameset label from Magnum (the configured mapping nameset).
+    - name: destinationTag
+      type: keyword
+      description: >
+        The configured destination tag the destination was cached under.
+    - name: sourceId
+      type: keyword
+      required: true
+      description: >
+        Source UUID of the route.
+    - name: sourceName
+      type: keyword
+      description: >
+        Source name from Magnum. Missing if the source is not in the source
+        cache.
+    - name: sourceLabel
+      type: keyword
+      description: >
+        Source nameset label from Magnum (the configured mapping nameset).
+    - name: clientIP
+      type: ip
+      description: >
+        Client IP from the magclientsrv "Received Dispatch Request" log.
+        Missing if no magclientsrv log was correlated.
+    - name: durationMs
+      type: long
+      format: duration
+      input_format: milliseconds
+      description: >
+        Milliseconds from the scheduler log to the last slab log. Missing if
+        either was not correlated.
+    - name: multicastAddress
+      type: keyword
+      description: >
+        Route multicast address, from the magrtrsrv log (or the slab log when
+        there is no magrtrsrv log).
+    - name: complete
+      type: boolean
+      required: true
+      description: >
+        True if a magrtrsrv or slab log was correlated, i.e. the route reached
+        the slabs.
+    - name: partial
+      type: boolean
+      required: true
+      description: >
+        True if only magnum logs opened the route: neither the configured
+        opener (scheduler by default) nor a magclientsrv log was correlated.
+    - name: slabs
+      type: group
+      description: >
+        Each slab that sent a slab log, ordered by the time of its first log.
+      fields:
+        - name: slabName
+          type: keyword
+          description: >
+            Slab hostname.
+        - name: slabOutput
+          type: long
+          description: >
+            Slab output (DST) number.
+    - name: matchedLogs
+      type: group
+      required: true
+      description: >
+        Every correlated log, ordered by type (scheduler, magclientsrv,
+        magnum_subscribe, magnum_complete, magrtrsrv, slab) and then by time.
+      fields:
+        - name: log
+          type: text
+          multi_fields:
+            - name: keyword
+              type: keyword
+              ignore_above: 1024
+          description: >
+            The log line.
+        - name: time
+          type: date
+          description: >
+            When the device emitted the log.
+        - name: type
+          type: keyword
+          description: >
+            Log type: scheduler, magclientsrv, magnum_subscribe,
+            magnum_complete, magrtrsrv or slab.

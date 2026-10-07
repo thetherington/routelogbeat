@@ -96,6 +96,31 @@ class Route:
     start: float = 0.0                   # offset of this route's first log
     client_ip: str = "10.103.40.46"      # magclientsrv "Client [ip:port]"
     client_port: int = 45662
+    # Which logs this route sends. Default to the CLI flags; a scenario file
+    # can override them per route.
+    scheduler: str = "v1"                # v1 | v2 | none
+    magclientsrv: bool = True
+    subscribe: str = "dst_sub"           # dst_sub | subscription | none
+    complete: bool = True
+    magrtrsrv: str = "all"               # all | first | none
+    slab_logs: bool = True
+
+    def omitted(self) -> list[str]:
+        """Names of the logs this route leaves out, for the summary line."""
+        out = []
+        if self.scheduler == "none":
+            out.append("scheduler")
+        if not self.magclientsrv:
+            out.append("magclientsrv")
+        if self.subscribe == "none":
+            out.append("subscribe")
+        if not self.complete:
+            out.append("complete")
+        if self.magrtrsrv == "none":
+            out.append("magrtrsrv")
+        if not self.slab_logs:
+            out.append("slab")
+        return out
 
 
 @dataclass(order=True)
@@ -236,25 +261,25 @@ def build_messages(routes: list[Route], a: argparse.Namespace) -> list[Message]:
     for i, r in enumerate(routes, 1):
         base = r.start
         prev_nominal = prev_actual = 0.0
-        if a.scheduler != "none":
+        if r.scheduler != "none":
             add(i, base, timing["scheduler"], "scheduler", a.scheduler_host, a.scheduler_tag,
-                scheduler_body(r, a.scheduler))
-        if not a.no_magclientsrv:
+                scheduler_body(r, r.scheduler))
+        if r.magclientsrv:
             add(i, base, timing["magclientsrv"], "magclientsrv", a.magclientsrv_host, a.magclientsrv_tag,
                 magclientsrv_body(r))
-        if a.subscribe != "none":
+        if r.subscribe != "none":
             add(i, base, timing["subscribe"], "magnum", a.magnum_host, a.magnum_tag,
-                subscribe_body(r, a.subscribe))
-        if not a.no_complete:
+                subscribe_body(r, r.subscribe))
+        if r.complete:
             add(i, base, timing["complete"], "magnum", a.magnum_host, a.magnum_tag, complete_body(r))
-        if a.magrtrsrv != "none":
+        if r.magrtrsrv != "none":
             # One set.rx.route per slab (unless "first"), spaced like the slab
             # lines so each slab's magrtrsrv log precedes it.
-            targets = r.slabs if a.magrtrsrv == "all" else r.slabs[:1]
+            targets = r.slabs if r.magrtrsrv == "all" else r.slabs[:1]
             for n, slab in enumerate(targets):
                 add(i, base, timing["magrtrsrv"] + n * timing["slab_gap"], "magrtrsrv", a.magrtrsrv_host, a.magrtrsrv_tag,
                     magrtrsrv_body(r, slab, a.udp_port, a.source_ip))
-        for n, slab in enumerate(r.slabs):
+        for n, slab in enumerate(r.slabs if r.slab_logs else []):
             # body is rendered at send time so its in-line timestamp is real
             add(i, base, timing["slab"] + n * timing["slab_gap"], "slab", slab.name, a.slab_tag,
                 f"__SLAB__{n}")
@@ -277,8 +302,32 @@ def routes_from_args(a: argparse.Namespace) -> list[Route]:
             start=n * a.interval,
             client_ip=a.client_ip,
             client_port=a.client_port,
+            **log_selection({}, a),
         ))
     return routes
+
+
+LOG_CHOICES = {
+    "scheduler": ("v1", "v2", "none"),
+    "subscribe": ("dst_sub", "subscription", "none"),
+    "magrtrsrv": ("all", "first", "none"),
+}
+
+
+def log_selection(e: dict, a: argparse.Namespace) -> dict:
+    """Which logs a route sends: the scenario entry's value if set, else the CLI flag."""
+    sel = {
+        "scheduler": e.get("scheduler", a.scheduler),
+        "magclientsrv": bool(e.get("magclientsrv", not a.no_magclientsrv)),
+        "subscribe": e.get("subscribe", a.subscribe),
+        "complete": bool(e.get("complete", not a.no_complete)),
+        "magrtrsrv": e.get("magrtrsrv", a.magrtrsrv),
+        "slab_logs": bool(e.get("slab_logs", not a.no_slab_logs)),
+    }
+    for key, choices in LOG_CHOICES.items():
+        if sel[key] not in choices:
+            raise SystemExit(f"scenario: {key} must be one of {', '.join(choices)}, got {sel[key]!r}")
+    return sel
 
 
 def routes_from_scenario(path: str, a: argparse.Namespace) -> list[Route]:
@@ -289,9 +338,15 @@ def routes_from_scenario(path: str, a: argparse.Namespace) -> list[Route]:
         {"src": "...", "dst": "...", "multicast": "239.32.111.55",
          "slabs": [{"name": "sv7bc-slab027", "output": 4}, "sv7bc-slab058:4"],
          "slab_multicast": "239.1.1.1", "start": 0,
-         "client_ip": "10.103.40.46", "client_port": 45662}
+         "client_ip": "10.103.40.46", "client_port": 45662,
+         "scheduler": "none", "magclientsrv": false, "subscribe": "dst_sub",
+         "complete": true, "magrtrsrv": "all", "slab_logs": false}
       ]
     }
+
+    The last six keys choose which logs the route sends (same values as the
+    --scheduler, --no-magclientsrv, --subscribe, --no-complete, --magrtrsrv
+    and --no-slab-logs flags).
     """
     with open(path) as f:
         doc = json.load(f)
@@ -308,6 +363,7 @@ def routes_from_scenario(path: str, a: argparse.Namespace) -> list[Route]:
             multicast=e.get("multicast", a.multicast),
             slab_multicast=e.get("slab_multicast", a.slab_multicast),
             start=float(e.get("start", n * a.interval)),
+            **log_selection(e, a),
             client_ip=e.get("client_ip", a.client_ip),
             client_port=int(e.get("client_port", a.client_port)),
         ))
@@ -358,6 +414,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     g.add_argument("--no-complete", action="store_true", help="omit the Subscription Request Complete line")
     g.add_argument("--magrtrsrv", choices=["all", "first", "none"], default="all",
                    help="send set.rx.route for every slab (default), only the first slab, or none")
+    g.add_argument("--no-slab-logs", action="store_true",
+                   help="omit the slab AuditSet:DST lines (magrtrsrv logs are still sent)")
 
     # The tag is the syslog process name: TAG in "HOST TAG: MSG" (rfc3164),
     # APP-NAME (rfc5424). Pass "" to omit it.
@@ -403,8 +461,9 @@ def main(argv: list[str]) -> int:
     for i, r in enumerate(routes, 1):
         slabs = ", ".join(f"{s.name}:{s.output}" for s in r.slabs)
         extra = f" slab_multicast={r.slab_multicast}" if r.slab_multicast else ""
+        omitted = f" without=[{', '.join(r.omitted())}]" if r.omitted() else ""
         print(f"route {i}: src={r.src} dst={r.dst} multicast={r.multicast}{extra} slabs=[{slabs}] "
-              f"client={r.client_ip}:{r.client_port}")
+              f"client={r.client_ip}:{r.client_port}{omitted}")
     print(f"{len(msgs)} messages over {msgs[-1].offset:.3f}s -> "
           f"{'(dry run)' if a.dry_run else f'{a.proto}://{a.target}:{a.port}'} ({a.format})\n")
 

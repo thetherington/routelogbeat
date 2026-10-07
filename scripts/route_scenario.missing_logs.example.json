@@ -1,0 +1,38 @@
+{
+    "routes": [
+        {
+            "src": "78fa211c-1e6c-5e5c-b697-1a4a7cbf5cb3",
+            "dst": "af2925a1-a72f-5355-a5d5-c3ec7f5de929",
+            "multicast": "239.131.1.163",
+            "slabs": [
+                { "name": "iad1bc-slab034", "output": 32 },
+                { "name": "iad1bc-slab015", "output": 32 }
+            ],
+            "start": 0,
+            "scheduler": "none"
+        },
+        {
+            "src": "83553388-ff05-5903-89fa-6b830a19db57",
+            "dst": "63fe05f6-197a-572f-b1f8-f5fe9ffce2b7",
+            "multicast": "239.131.1.52",
+            "slabs": [
+                { "name": "iad1bc-slab028", "output": 3 },
+                { "name": "iad1bc-slab047", "output": 3 }
+            ],
+            "start": 5,
+            "slab_logs": false
+        },
+        {
+            "src": "6afd2a7d-f4ae-54ac-b1c8-1f610abf391b",
+            "dst": "9d927697-e282-51fb-af56-2aeac5305e6c",
+            "multicast": "239.131.0.22",
+            "slabs": [
+                { "name": "iad1bc-slab016", "output": 4 },
+                { "name": "iad1bc-slab035", "output": 4 }
+            ],
+            "start": 10,
+            "scheduler": "none",
+            "slab_logs": false
+        }
+    ]
+}

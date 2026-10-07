@@ -171,16 +171,16 @@ func (bt *routelogbeat) Run(b *beat.Beat) error {
 			// it closes so the actor's final shutdown sends (any envelopes
 			// still open at Close time, dispatched with ReasonShutdown)
 			// always complete instead of blocking forever with no reader.
+			// Those envelopes are still published, so the publisher client is
+			// closed here, after the drain, rather than in Stop.
 			for env := range bt.engine.Events() {
-				bt.logEnvelope(env)
+				bt.publishEnvelope(env)
 			}
+			bt.client.Close()
 			return nil
 
 		case env := <-bt.engine.Events():
-			// Phase 1 placeholder: log the closed envelope. Phase 2 replaces
-			// this with bt.client.Publish(envelopeToEvent(env)) once the
-			// presentation shape is decided.
-			bt.logEnvelope(env)
+			bt.publishEnvelope(env)
 
 		case l := <-logsCh:
 			// decode the log message from the RabbitMQ message body as json
@@ -197,8 +197,17 @@ func (bt *routelogbeat) Run(b *beat.Beat) error {
 	}
 }
 
-// logEnvelope reports one closed envelope. It is the Phase 1 stand-in for
-// publishing a beat.Event (see Run).
+// publishEnvelope publishes one closed envelope as an Elasticsearch document
+// and logs it.
+func (bt *routelogbeat) publishEnvelope(env *correlator.Envelope) {
+	if env == nil {
+		return
+	}
+	bt.client.Publish(envelopeToEvent(env))
+	bt.logEnvelope(env)
+}
+
+// logEnvelope reports one closed envelope in the beat's log.
 func (bt *routelogbeat) logEnvelope(env *correlator.Envelope) {
 	if env == nil {
 		return
@@ -224,11 +233,6 @@ func (bt *routelogbeat) logEnvelope(env *correlator.Envelope) {
 		env.Key.Src, env.Key.Dst, env.OpenedBy.Family(), env.Partial,
 		len(env.Records), env.SourceCounts(), env.Duration(), schedToSlab, client, env.Reason)
 
-	// print the env.Records
-	// for _, record := range env.Records {
-	// 	logp.Info("routelogbeat: record=%v", record)
-	// }
-
 	// print the resolved slabs from the envelope's records
 	logp.Info("routelogbeat: resolved slabs from envelope's records %v", env.Resolved.Slabs)
 
@@ -244,7 +248,8 @@ func (bt *routelogbeat) Stop() {
 	bt.engine.Close()         // then the correlation engine
 	bt.magnumClient.Close()   // close the magnum client
 
-	bt.client.Close()
+	// bt.client is closed by Run once it has published the envelopes the
+	// engine dispatches at shutdown.
 	close(bt.done)
 }
 
