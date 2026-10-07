@@ -15671,18 +15671,208 @@ type: text
 [[exported-fields-routelogbeat]]
 == routelogbeat fields
 
-None
+One document per correlated route change: the logs of every service that took part, the route's source and destination, and how long it took.
 
 
-*`counter`*::
+
+*`destinationId`*::
 +
 --
-PLEASE UPDATE DOCUMENTATION
+Destination UUID of the route.
+
+
+type: keyword
+
+required: True
+
+--
+
+*`destinationName`*::
++
+--
+Destination name from Magnum. Missing if the destination is not in the destination cache.
+
+
+type: keyword
+
+--
+
+*`destinationLabel`*::
++
+--
+Destination nameset label from Magnum (the configured mapping nameset).
+
+
+type: keyword
+
+--
+
+*`destinationTag`*::
++
+--
+The configured destination tag the destination was cached under.
+
+
+type: keyword
+
+--
+
+*`sourceId`*::
++
+--
+Source UUID of the route.
+
+
+type: keyword
+
+required: True
+
+--
+
+*`sourceName`*::
++
+--
+Source name from Magnum. Missing if the source is not in the source cache.
+
+
+type: keyword
+
+--
+
+*`sourceLabel`*::
++
+--
+Source nameset label from Magnum (the configured mapping nameset).
+
+
+type: keyword
+
+--
+
+*`clientIP`*::
++
+--
+Client IP from the magclientsrv "Received Dispatch Request" log. Missing if no magclientsrv log was correlated.
+
+
+type: ip
+
+--
+
+*`durationMs`*::
++
+--
+Milliseconds from the scheduler log to the last slab log. Missing if either was not correlated.
 
 
 type: long
 
+format: duration
+
+--
+
+*`multicastAddress`*::
++
+--
+Route multicast address, from the magrtrsrv log (or the slab log when there is no magrtrsrv log).
+
+
+type: keyword
+
+--
+
+*`complete`*::
++
+--
+True if a magrtrsrv or slab log was correlated, i.e. the route reached the slabs.
+
+
+type: boolean
+
 required: True
+
+--
+
+*`partial`*::
++
+--
+True if only magnum logs opened the route: neither the configured opener (scheduler by default) nor a magclientsrv log was correlated.
+
+
+type: boolean
+
+required: True
+
+--
+
+[float]
+=== slabs
+
+Each slab that sent a slab log, ordered by the time of its first log.
+
+
+
+*`slabs.slabName`*::
++
+--
+Slab hostname.
+
+
+type: keyword
+
+--
+
+*`slabs.slabOutput`*::
++
+--
+Slab output (DST) number.
+
+
+type: long
+
+--
+
+[float]
+=== matchedLogs
+
+Every correlated log, ordered by type (scheduler, magclientsrv, magnum_subscribe, magnum_complete, magrtrsrv, slab) and then by time.
+
+
+
+*`matchedLogs.log`*::
++
+--
+The log line.
+
+
+type: text
+
+--
+
+*`matchedLogs.log.keyword`*::
++
+--
+type: keyword
+
+--
+
+*`matchedLogs.time`*::
++
+--
+When the device emitted the log.
+
+
+type: date
+
+--
+
+*`matchedLogs.type`*::
++
+--
+Log type: scheduler, magclientsrv, magnum_subscribe, magnum_complete, magrtrsrv or slab.
+
+
+type: keyword
 
 --
 
